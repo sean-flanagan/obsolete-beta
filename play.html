@@ -3,9 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tiny Three.js — Fall Dodge</title>
+    <title>Moving Computer — puzzle platformer</title>
     <link rel="stylesheet" href="src/style.css" />
-    <!-- Load Three.js from a CDN so you don’t need npm or node_modules -->
     <script type="importmap">
       {
         "imports": {
@@ -16,13 +15,21 @@
   </head>
   <body>
     <div id="hud">
-      <div id="score">Score: 0</div>
-      <div id="hint">← → or A D to move · Survive the cubes</div>
+      <div id="score">Find the exit</div>
+      <div id="hint">
+        ← → or A D · Space / W / ↑ jump · Reach the green Wi‑Fi door · Stand by the
+        router to open the wall
+      </div>
+    </div>
+    <div id="win" hidden>
+      <p id="win-title">Online!</p>
+      <p id="win-sub">Your moving computer made it to the network.</p>
+      <button type="button" id="play-again">Play again</button>
     </div>
     <div id="gameover" hidden>
-      <p>Game over</p>
-      <p id="final-score"></p>
-      <button type="button" id="restart">Play again</button>
+      <p>Recalibrating…</p>
+      <p id="final-score">You fell off the desk.</p>
+      <button type="button" id="restart">Respawn</button>
     </div>
     <script type="module" src="src/main.js"></script>
   </body>
