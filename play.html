@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tiny Three.js — Fall Dodge</title>
+    <link rel="stylesheet" href="src/style.css" />
+    <!-- Load Three.js from a CDN so you don’t need npm or node_modules -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="hud">
+      <div id="score">Score: 0</div>
+      <div id="hint">← → or A D to move · Survive the cubes</div>
+    </div>
+    <div id="gameover" hidden>
+      <p>Game over</p>
+      <p id="final-score"></p>
+      <button type="button" id="restart">Play again</button>
+    </div>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
