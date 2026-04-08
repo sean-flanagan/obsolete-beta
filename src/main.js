@@ -2,9 +2,13 @@ import * as THREE from "three";
 
 const PLAYER_HW = 0.34;
 const PLAYER_HH = 0.56;
-const MOVE = 6.2;
+const MOVE_MAX = 6.6;
+const MOVE_ACCEL = 46;
+const MOVE_ACCEL_AIR = 26;
+const MOVE_FRICTION = 54;
 const GRAVITY = -32;
 const JUMP_V = 11.5;
+const JUMP_CUT = 0.45;
 const MAX_FALL = 22;
 const COYOTE = 0.08;
 const JUMP_BUFFER = 0.1;
@@ -96,6 +100,40 @@ const LEVELS = [
     nextIsFinal: true,
   },
 ];
+
+const LS_BEST = "tiny-threejs-game:bestTimes:v1";
+/** @type {number[]} */
+let bestTimes = [];
+
+function readBestTimes() {
+  try {
+    const raw = localStorage.getItem(LS_BEST);
+    if (!raw) return LEVELS.map(() => Infinity);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return LEVELS.map(() => Infinity);
+    return LEVELS.map((_, i) =>
+      typeof parsed[i] === "number" ? parsed[i] : Infinity
+    );
+  } catch {
+    return LEVELS.map(() => Infinity);
+  }
+}
+
+function writeBestTimes() {
+  try {
+    localStorage.setItem(LS_BEST, JSON.stringify(bestTimes));
+  } catch {
+    // ignore (private mode / blocked storage)
+  }
+}
+
+function fmtTime(s) {
+  if (!Number.isFinite(s)) return "--:--.--";
+  const m = Math.floor(s / 60);
+  const ss = s - m * 60;
+  const sec = ss.toFixed(2).padStart(5, "0");
+  return `${m}:${sec}`;
+}
 
 let keys = { left: false, right: false, jump: false };
 
@@ -430,6 +468,7 @@ let syncDone = false;
 let lastSeenA = -1e9;
 let lastSeenB = -1e9;
 let levelElapsed = 0;
+let levelStartTime = 0;
 let timedBarrierTimer = 0;
 
 let levelIndex = 0;
@@ -549,6 +588,7 @@ function loadLevel(idx) {
   lastSeenA = -1e9;
   lastSeenB = -1e9;
   levelElapsed = 0;
+  levelStartTime = 0;
   timedBarrierTimer = 0;
   glitchVx = 4;
 
@@ -687,6 +727,8 @@ function loadLevel(idx) {
   vx = 0;
   vy = 0;
   groundedLast = true;
+  jumpHeld = false;
+  prevJumpHeld = false;
   camera.position.set(L.spawn.x + 1.2, 2.1, 11);
   camera.lookAt(L.spawn.x + 0.5, -0.2, 0);
 }
@@ -740,6 +782,8 @@ let jumpBuf = 0;
 let won = false;
 let fell = false;
 let groundedLast = true;
+let jumpHeld = false;
+let prevJumpHeld = false;
 
 const winEl = document.getElementById("win");
 const winTitleEl = document.getElementById("win-title");
@@ -749,6 +793,157 @@ const gameoverEl = document.getElementById("gameover");
 const restartBtn = document.getElementById("restart");
 const hudGoal = document.getElementById("score");
 const hudHint = document.getElementById("hint");
+const titleScreenEl = document.getElementById("title-screen");
+const titlePlayBtn = document.getElementById("title-play");
+
+let gameStarted = false;
+
+function startGameFromTitle() {
+  if (gameStarted) return;
+  gameStarted = true;
+  if (titleScreenEl) titleScreenEl.hidden = true;
+  keys = { left: false, right: false, jump: false };
+  sfx.unlock();
+  loadLevel(0);
+}
+
+if (titlePlayBtn) {
+  titlePlayBtn.addEventListener("click", startGameFromTitle);
+}
+if (!titleScreenEl) gameStarted = true;
+
+function createSfx() {
+  /** @type {AudioContext | null} */ let ctx = null;
+  /** @type {GainNode | null} */ let master = null;
+  let muted = false;
+  let unlocked = false;
+
+  function ensure() {
+    if (ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.5;
+    master.connect(ctx.destination);
+  }
+
+  async function unlock() {
+    ensure();
+    if (!ctx || !master) return;
+    if (ctx.state === "suspended") {
+      try {
+        await ctx.resume();
+      } catch {
+        // ignore
+      }
+    }
+    unlocked = ctx.state === "running";
+  }
+
+  function setMuted(v) {
+    muted = v;
+    if (!master) return;
+    master.gain.value = muted ? 0 : 0.5;
+  }
+
+  function toggleMuted() {
+    setMuted(!muted);
+    return muted;
+  }
+
+  function now() {
+    return ctx ? ctx.currentTime : 0;
+  }
+
+  function beep({
+    t0,
+    f0,
+    f1,
+    dur,
+    type = "sine",
+    gain = 0.12,
+    q = 0,
+    lp = 14000,
+  }) {
+    if (!ctx || !master || !unlocked || muted) return;
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(lp, t0);
+    filter.Q.setValueAtTime(q, t0);
+
+    osc.frequency.setValueAtTime(f0, t0);
+    if (f1 != null) osc.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+
+    osc.connect(filter);
+    filter.connect(g);
+    g.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  function play(name) {
+    ensure();
+    if (!ctx) return;
+    const t = now() + 0.001;
+    switch (name) {
+      case "jump":
+        beep({ t0: t, f0: 420, f1: 760, dur: 0.08, type: "triangle", gain: 0.09 });
+        break;
+      case "land":
+        beep({ t0: t, f0: 140, f1: 90, dur: 0.05, type: "sine", gain: 0.06, lp: 800 });
+        break;
+      case "router":
+        beep({ t0: t, f0: 880, f1: 1320, dur: 0.06, type: "square", gain: 0.05, lp: 6000 });
+        beep({ t0: t + 0.07, f0: 990, f1: 1480, dur: 0.06, type: "square", gain: 0.05, lp: 6000 });
+        break;
+      case "usb":
+        beep({ t0: t, f0: 520, f1: 1040, dur: 0.08, type: "sawtooth", gain: 0.05, lp: 5000 });
+        beep({ t0: t + 0.09, f0: 1040, f1: 1560, dur: 0.07, type: "triangle", gain: 0.05, lp: 7000 });
+        break;
+      case "sync":
+        beep({ t0: t, f0: 660, f1: 1320, dur: 0.09, type: "triangle", gain: 0.07, lp: 9000 });
+        beep({ t0: t + 0.11, f0: 990, f1: 1980, dur: 0.08, type: "triangle", gain: 0.06, lp: 9000 });
+        break;
+      case "doorOpen":
+        beep({ t0: t, f0: 220, f1: 440, dur: 0.12, type: "sine", gain: 0.06, lp: 2500 });
+        break;
+      case "doorClose":
+        beep({ t0: t, f0: 440, f1: 220, dur: 0.12, type: "sine", gain: 0.06, lp: 2500 });
+        break;
+      case "win":
+        beep({ t0: t, f0: 523, f1: 784, dur: 0.12, type: "triangle", gain: 0.07, lp: 12000 });
+        beep({ t0: t + 0.14, f0: 659, f1: 988, dur: 0.14, type: "triangle", gain: 0.07, lp: 12000 });
+        break;
+      case "respawn":
+        beep({ t0: t, f0: 260, f1: 130, dur: 0.11, type: "sawtooth", gain: 0.05, lp: 2000 });
+        break;
+      case "hit":
+        beep({ t0: t, f0: 220, f1: 60, dur: 0.09, type: "square", gain: 0.06, lp: 1800 });
+        break;
+      default:
+        break;
+    }
+  }
+
+  return {
+    unlock,
+    play,
+    toggleMuted,
+    get muted() {
+      return muted;
+    },
+  };
+}
+
+const sfx = createSfx();
 
 function setKeys(code, down) {
   if (code === "ArrowLeft" || code === "KeyA") keys.left = down;
@@ -759,6 +954,20 @@ function setKeys(code, down) {
 
 window.addEventListener("keydown", (e) => {
   if (e.repeat) return;
+  if (!gameStarted) {
+    sfx.unlock();
+    if (e.code === "Enter" || e.code === "Space") {
+      e.preventDefault();
+      startGameFromTitle();
+    }
+    return;
+  }
+  sfx.unlock();
+  if (e.code === "KeyM") {
+    const isMuted = sfx.toggleMuted();
+    hudGoal.textContent = isMuted ? "Muted" : LEVELS[levelIndex].name;
+    return;
+  }
   if (won && (e.code === "KeyR" || e.code === "Space")) {
     e.preventDefault();
     handleWinAction();
@@ -772,7 +981,11 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Space") e.preventDefault();
   setKeys(e.code, true);
 });
-window.addEventListener("keyup", (e) => setKeys(e.code, false));
+window.addEventListener("keyup", (e) => {
+  if (!gameStarted) return;
+  setKeys(e.code, false);
+});
+window.addEventListener("pointerdown", () => sfx.unlock(), { passive: true });
 
 function rectsOverlap(a, b) {
   return (
@@ -805,7 +1018,10 @@ function tryRouter() {
   if (routerAllOn) return;
   for (let i = 0; i < L.routers.length; i++) {
     if (routerActivated[i]) continue;
-    if (routerPinged(i)) routerActivated[i] = true;
+    if (routerPinged(i)) {
+      routerActivated[i] = true;
+      sfx.play("router");
+    }
   }
   const need = L.routers.length;
   if (routerActivated.filter(Boolean).length >= need) {
@@ -813,6 +1029,7 @@ function tryRouter() {
     if (barrierMesh) barrierMesh.visible = false;
     rebuildPlatformRects();
     hudGoal.textContent = L.afterRouterHud;
+    sfx.play("doorOpen");
   }
 }
 
@@ -842,9 +1059,17 @@ function checkWin() {
     won = true;
     winEl.hidden = false;
     const L = LEVELS[levelIndex];
+    const t = Math.max(0, levelElapsed - levelStartTime);
+    if (!bestTimes.length) bestTimes = readBestTimes();
+    if (t < bestTimes[levelIndex]) {
+      bestTimes[levelIndex] = t;
+      writeBestTimes();
+    }
     winTitleEl.textContent = L.winTitle;
-    winSub.textContent = L.winSub;
+    const pb = bestTimes[levelIndex];
+    winSub.textContent = `${L.winSub}\nTime: ${fmtTime(t)} · PB: ${fmtTime(pb)}`;
     playAgainBtn.textContent = L.nextIsFinal ? "Play again" : "Next level";
+    sfx.play("win");
   }
 }
 
@@ -867,7 +1092,10 @@ function respawn() {
   vy = 0;
   fell = false;
   groundedLast = true;
+  jumpHeld = false;
+  prevJumpHeld = false;
   gameoverEl.hidden = true;
+  sfx.play("respawn");
 }
 
 function resetFullGame() {
@@ -885,10 +1113,11 @@ playAgainBtn.addEventListener("click", handleWinAction);
 const EPS = 0.015;
 
 function physicsStep(dt) {
-  if (won || fell) return;
+  if (!gameStarted || won || fell) return;
 
   const L = LEVELS[levelIndex];
   levelElapsed += dt;
+  const wasGrounded = groundedLast;
 
   if (movingPlatform) {
     const prevX = movingPlatform.x;
@@ -925,6 +1154,7 @@ function physicsStep(dt) {
       maxY: g.y + g.half,
     };
     if (rectsOverlap(playerRect(), gr)) {
+      sfx.play("hit");
       respawn();
       return;
     }
@@ -942,6 +1172,7 @@ function physicsStep(dt) {
       hasUsb = true;
       usbGroup.visible = false;
       hudGoal.textContent = "USB acquired — sync both pads (<0.5s)";
+      sfx.play("usb");
     }
   }
 
@@ -959,6 +1190,8 @@ function physicsStep(dt) {
       timedBarrierTimer = L.timedBarrierSec ?? 8;
       if (barrierMesh) barrierMesh.visible = false;
       hudGoal.textContent = L.afterSyncHud ?? "Go!";
+      sfx.play("sync");
+      sfx.play("doorOpen");
     }
   }
 
@@ -967,6 +1200,7 @@ function physicsStep(dt) {
     if (timedBarrierTimer <= 0) {
       if (barrierMesh) barrierMesh.visible = true;
       rebuildPlatformRects();
+      sfx.play("doorClose");
       const br = L.barrier;
       if (br && rectsOverlap(playerRect(), br)) {
         respawn();
@@ -980,20 +1214,38 @@ function physicsStep(dt) {
   let ax = 0;
   if (keys.left) ax -= 1;
   if (keys.right) ax += 1;
-  vx = ax * MOVE;
+  const targetVx = ax * MOVE_MAX;
+  const accel = groundedLast ? MOVE_ACCEL : MOVE_ACCEL_AIR;
+  if (ax !== 0) {
+    const dv = targetVx - vx;
+    const maxStep = accel * dt;
+    vx += THREE.MathUtils.clamp(dv, -maxStep, maxStep);
+  } else if (groundedLast) {
+    const fr = MOVE_FRICTION * dt;
+    if (Math.abs(vx) <= fr) vx = 0;
+    else vx -= Math.sign(vx) * fr;
+  }
 
   jumpBuf = Math.max(0, jumpBuf - dt);
-  if (keys.jump) jumpBuf = JUMP_BUFFER;
+  jumpHeld = keys.jump;
+  if (jumpHeld) jumpBuf = JUMP_BUFFER;
 
   if (groundedLast) coyote = COYOTE;
   else coyote = Math.max(0, coyote - dt);
 
-  if ((groundedLast || coyote > 0) && jumpBuf > 0 && keys.jump) {
+  if ((groundedLast || coyote > 0) && jumpBuf > 0 && jumpHeld) {
     vy = JUMP_V;
     jumpBuf = 0;
     coyote = 0;
     groundedLast = false;
+    sfx.play("jump");
   }
+
+  // Variable jump height: releasing jump early cuts upward velocity.
+  if (prevJumpHeld && !jumpHeld && vy > 0) {
+    vy *= JUMP_CUT;
+  }
+  prevJumpHeld = jumpHeld;
 
   vy = Math.max(-MAX_FALL, vy + GRAVITY * dt);
 
@@ -1030,9 +1282,16 @@ function physicsStep(dt) {
   }
 
   groundedLast = grounded;
+  if (!wasGrounded && groundedLast) sfx.play("land");
 
   tryRouter();
   checkWin();
+
+  // Update HUD timer while playing (keeps the level name as the main line).
+  if (!bestTimes.length) bestTimes = readBestTimes();
+  const runT = Math.max(0, levelElapsed - levelStartTime);
+  const pb = bestTimes[levelIndex];
+  hudHint.textContent = `${L.hint} · Time: ${fmtTime(runT)} · PB: ${fmtTime(pb)}`;
 
   if (py < KILL_Y) {
     fell = true;
