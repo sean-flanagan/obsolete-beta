@@ -35,6 +35,7 @@ export class ObsoleteGame {
     this.banner = { text: "", timer: 0 };
     this.scheduledEvents = [];
     this.cutscene = null;
+    this.interactionFocus = null;
 
     this.player = {
       x: 0,
@@ -65,6 +66,8 @@ export class ObsoleteGame {
       batterySocketPowered: false,
       act2GateOpen: false,
       diagnosticPassed: false,
+      act1TalkedToMachine: false,
+      act2UnderstoodGate: false,
     };
   }
 
@@ -92,6 +95,7 @@ export class ObsoleteGame {
     this.glitch = 0;
     this.scheduledEvents = [];
     this.cutscene = null;
+    this.interactionFocus = null;
     this.progress = this.createProgress();
     this.player.mood = "curious";
     this.miniGame = this.createMiniGameState();
@@ -122,6 +126,145 @@ export class ObsoleteGame {
   updateStatus(act, hint) {
     this.ui.statusAct.textContent = act;
     this.ui.statusHint.textContent = hint;
+  }
+
+  getCurrentObjective() {
+    if (this.mode === "title") {
+      return {
+        title: "Boot up and get your bearings.",
+        body: "Press Enter or click Boot Up to wake the laptop.",
+      };
+    }
+
+    if (this.mode === "boot") {
+      return {
+        title: "Recovery BIOS is coming online.",
+        body: "Wait for the surge to finish, then start moving.",
+      };
+    }
+
+    if (this.mode === "cutscene") {
+      return {
+        title: "Watch the scene for your next goal.",
+        body: "Press Enter, E, or Space to advance dialogue when you're ready.",
+      };
+    }
+
+    if (this.mode === "minigame") {
+      return {
+        title: `Pass Diagnostic ${this.miniGame.round}/3.`,
+        body:
+          this.miniGame.phase === "input"
+            ? "Repeat the shown sequence with Arrow Keys or WASD."
+            : "Watch the sequence, then repeat it cleanly.",
+      };
+    }
+
+    if (this.mode === "ending") {
+      return {
+        title: "Run for the sunrise.",
+        body: "Keep moving right. You are out if you stay moving.",
+      };
+    }
+
+    if (this.mode === "win") {
+      return {
+        title: "You escaped.",
+        body: "Press Play Again or R to restart the prototype.",
+      };
+    }
+
+    if (this.actIndex === 0) {
+      if (!this.progress.act1TalkedToMachine) {
+        return {
+          title: "Find a powered machine and talk to it.",
+          body: "Head toward the nearest glowing device and press E. Bitter CRT is closest on your right.",
+        };
+      }
+      if (!this.progress.batterySocketPowered) {
+        return {
+          title: "Push the orange battery into the glowing socket.",
+          body: "Walk into the battery to shove it, then line it up with the cyan socket to restore power.",
+        };
+      }
+      return {
+        title: "The gate is live — move through it.",
+        body: "Head right through the opened gate to reach the conveyor line.",
+      };
+    }
+
+    if (this.actIndex === 1) {
+      if (!this.progress.hasFloppy) {
+        return {
+          title: "Find the floppy disk.",
+          body: "Ride the conveyor, dodge the crushers, and grab the glowing disk before the gate console.",
+        };
+      }
+      if (!this.progress.act2GateOpen) {
+        return {
+          title: "Feed the floppy disk into the gate console.",
+          body: "Approach the console near the exit gate and press E to unlock the route.",
+        };
+      }
+      return {
+        title: "The route is open — get through the gate.",
+        body: "Move into the exit arch to reach the final chamber.",
+      };
+    }
+
+    if (!this.progress.diagnosticPassed) {
+      return {
+        title: "Prove you still work.",
+        body: "Reach the diagnostic console and pass all three memory-sequence rounds.",
+      };
+    }
+
+    return {
+      title: "The final route is open.",
+      body: "Head for the exit and watch the sunrise.",
+    };
+  }
+
+  getInteractionFocus() {
+    if (this.mode !== "play") return null;
+
+    const nearestNpc = this.findNearest(this.act.npcs || []);
+    if (nearestNpc) {
+      return {
+        type: "npc",
+        x: nearestNpc.x,
+        y: nearestNpc.y,
+        w: nearestNpc.w,
+        h: nearestNpc.h,
+        label: `Press E: talk to ${nearestNpc.name}`,
+      };
+    }
+
+    if (this.actIndex === 0 && this.isNearRect(this.act.socket, 120) && !this.progress.batterySocketPowered) {
+      return {
+        type: "socket",
+        ...this.act.socket,
+        label: "Socket nearby — shove the battery into it.",
+      };
+    }
+
+    if (this.actIndex === 1 && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
+      return {
+        type: "gateConsole",
+        ...this.act.gateConsole,
+        label: this.progress.hasFloppy ? "Press E: use the gate console" : "Gate console: find a floppy disk first",
+      };
+    }
+
+    if (this.actIndex === 2 && this.isNearRect(this.act.console, INTERACT_RANGE)) {
+      return {
+        type: "finalConsole",
+        ...this.act.console,
+        label: this.progress.diagnosticPassed ? "Exit route is unlocked" : "Press E: start the diagnostic",
+      };
+    }
+
+    return null;
   }
 
   setDialogue(speaker, text, portrait = "laptop", duration = 5.2) {
@@ -265,6 +408,7 @@ export class ObsoleteGame {
     this.updateHazards();
     this.updateCamera(delta);
     this.checkActInteractions();
+    this.interactionFocus = this.getInteractionFocus();
   }
 
   updateMiniGame(delta) {
@@ -443,6 +587,7 @@ export class ObsoleteGame {
           this.progress.hasFloppy = true;
           this.audio.success();
           this.setDialogue("Obsolete", item.text, "laptop", 4.2);
+          this.progress.act2UnderstoodGate = true;
           this.updateStatus(this.act.label, "You have a floppy disk. Feed it to the gate console.");
         }
       }
@@ -565,7 +710,10 @@ export class ObsoleteGame {
     if (targetNpc) {
       const line = targetNpc.lines[targetNpc.index || 0];
       targetNpc.index = ((targetNpc.index || 0) + 1) % targetNpc.lines.length;
+      this.progress.act1TalkedToMachine = this.progress.act1TalkedToMachine || this.actIndex === 0;
+      this.progress.act2UnderstoodGate = this.progress.act2UnderstoodGate || this.actIndex === 1;
       this.setDialogue(targetNpc.name, line, targetNpc.portrait, 4.8);
+      this.interactionFocus = this.getInteractionFocus();
       return;
     }
 
@@ -581,6 +729,7 @@ export class ObsoleteGame {
         return;
       }
       this.progress.act2GateOpen = true;
+      this.progress.act2UnderstoodGate = true;
       this.audio.success();
       this.setBanner("GATE UNLOCKED", 1.8);
       this.setDialogue("Gate Console", "Legacy media accepted. Route open.", "console", 4.2);
@@ -854,6 +1003,7 @@ export class ObsoleteGame {
   }
 
   updateUi() {
+    const objective = this.getCurrentObjective();
     this.ui.memoryCount.textContent = `${this.progress.fragments.length}/${MEMORY_FRAGMENTS.length} fragments`;
     this.ui.batteryCells.forEach((cell, index) => {
       cell.classList.toggle("is-active", index < this.progress.integrity);
@@ -861,6 +1011,12 @@ export class ObsoleteGame {
 
     this.ui.dialogueSpeaker.textContent = this.dialogue.speaker;
     this.ui.dialogueText.textContent = this.dialogue.text;
+    this.ui.objectiveTitle.textContent = objective.title;
+    this.ui.objectiveBody.textContent = objective.body;
+
+    const prompt = this.mode === "play" ? this.interactionFocus?.label || "" : "";
+    this.ui.interactionPrompt.textContent = prompt;
+    this.ui.interactionPrompt.classList.toggle("is-hidden", !prompt);
 
     this.ui.titleScreen.classList.toggle("is-hidden", this.mode !== "title");
     this.ui.bootScreen.classList.toggle("is-hidden", this.mode !== "boot");
@@ -913,6 +1069,8 @@ export class ObsoleteGame {
         integrity: this.progress.integrity,
       },
       objective: this.ui.statusHint.textContent,
+      objectiveTitle: this.getCurrentObjective().title,
+      interactionPrompt: this.interactionFocus?.label || "",
       flags: {
         batterySocketPowered: this.progress.batterySocketPowered,
         hasFloppy: this.progress.hasFloppy,

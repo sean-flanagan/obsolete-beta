@@ -92,6 +92,8 @@ export class ObsoleteRenderer {
   setupDynamicObjects() {
     this.dynamic = {
       player: this.createLaptop("player"),
+      playerShadow: this.createPlayerShadow(),
+      interactionRing: this.createInteractionRing(),
       battery: this.createBattery(),
       socket: this.createSocket(),
       gateConsole: this.createConsole("DISK"),
@@ -111,6 +113,7 @@ export class ObsoleteRenderer {
     };
 
     this.scene.add(this.dynamic.player.group);
+    this.scene.add(this.dynamic.playerShadow, this.dynamic.interactionRing);
     this.scene.add(
       this.dynamic.battery,
       this.dynamic.socket,
@@ -328,12 +331,41 @@ export class ObsoleteRenderer {
   }
 
   updateDynamicObjects(game) {
+    const pulse = 0.5 + (Math.sin(game.time * 4.4) + 1) * 0.5;
     if (game.mode === "ending" || game.mode === "win") {
       this.updateLaptop(this.dynamic.player, game.player, game.player.mood, true);
+      this.dynamic.playerShadow.position.set(
+        this.toWorldX(game.player.x + game.player.w / 2),
+        0.04,
+        this.toWorldZ(game.player.y + game.player.h / 2)
+      );
+      this.dynamic.interactionRing.visible = false;
       return;
     }
 
     this.updateLaptop(this.dynamic.player, game.player, game.player.mood);
+    this.dynamic.playerShadow.position.set(
+      this.toWorldX(game.player.x + game.player.w / 2),
+      0.04,
+      this.toWorldZ(game.player.y + game.player.h / 2)
+    );
+    this.dynamic.playerShadow.material.opacity = 0.2 + pulse * 0.08;
+
+    if (game.interactionFocus) {
+      const focus = game.interactionFocus;
+      this.dynamic.interactionRing.visible = true;
+      this.dynamic.interactionRing.position.set(
+        this.toWorldX(focus.x + focus.w / 2),
+        0.06,
+        this.toWorldZ(focus.y + focus.h / 2)
+      );
+      const scaleX = Math.max(0.85, focus.w / WORLD_SCALE);
+      const scaleZ = Math.max(0.85, focus.h / WORLD_SCALE);
+      this.dynamic.interactionRing.scale.set(scaleX, 1, scaleZ);
+      this.dynamic.interactionRing.material.opacity = 0.28 + pulse * 0.2;
+    } else {
+      this.dynamic.interactionRing.visible = false;
+    }
 
     if (game.act.socket) {
       this.positionBox(this.dynamic.socket, game.act.socket, 0.4);
@@ -341,16 +373,21 @@ export class ObsoleteRenderer {
       this.dynamic.socket.material.color.set(
         game.progress.batterySocketPowered ? "#63ffd1" : "#203138"
       );
+      this.dynamic.socket.material.emissive?.set?.(game.progress.batterySocketPowered ? "#2ee2b3" : "#0f1518");
+      this.dynamic.socket.material.emissiveIntensity = game.progress.batterySocketPowered ? 0.48 + pulse * 0.16 : 0.08 + pulse * 0.12;
     } else {
       this.dynamic.socket.visible = false;
     }
 
     if (game.act.battery) {
-      this.positionBox(this.dynamic.battery, game.act.battery, 0.34);
+      this.positionBox(this.dynamic.battery, game.act.battery, 0.34 + Math.sin(game.time * 3.8) * 0.04);
       this.dynamic.battery.visible = !game.progress.batterySocketPowered || game.mode === "play";
       this.dynamic.battery.material.color.set(
         game.progress.batterySocketPowered ? "#72ffd7" : "#ff8c62"
       );
+      this.dynamic.battery.material.emissive?.set?.(game.progress.batterySocketPowered ? "#2ccfb0" : "#7a2a12");
+      this.dynamic.battery.material.emissiveIntensity = game.progress.batterySocketPowered ? 0.42 : 0.18 + pulse * 0.14;
+      this.dynamic.battery.rotation.y = Math.sin(game.time * 2.2) * 0.2;
     } else {
       this.dynamic.battery.visible = false;
     }
@@ -712,19 +749,56 @@ export class ObsoleteRenderer {
     );
   }
 
+  createPlayerShadow() {
+    const shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.68, 28),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.24,
+      })
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    return shadow;
+  }
+
+  createInteractionRing() {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.62, 0.9, 32),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.3,
+        side: THREE.DoubleSide,
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    return ring;
+  }
+
   createLaptop(kind) {
     const group = new THREE.Group();
-    const shellColor = kind === "player" ? "#8ea0aa" : "#7a8792";
-    const screenColor = kind === "player" ? "#9afce3" : "#c6ffe7";
+    const shellColor = kind === "player" ? "#c7d2d8" : "#7a8792";
+    const screenColor = kind === "player" ? "#b7fff1" : "#c6ffe7";
 
     const base = new THREE.Mesh(
       new THREE.BoxGeometry(1.1, 0.25, 0.78),
-      new THREE.MeshStandardMaterial({ color: shellColor, roughness: 0.7, metalness: 0.12 })
+      new THREE.MeshStandardMaterial({
+        color: shellColor,
+        roughness: 0.58,
+        metalness: 0.2,
+        emissive: kind === "player" ? "#182226" : "#0b0f11",
+        emissiveIntensity: kind === "player" ? 0.18 : 0.05,
+      })
     );
     base.position.y = 0.18;
     const lid = new THREE.Mesh(
       new THREE.BoxGeometry(0.88, 0.62, 0.12),
-      new THREE.MeshStandardMaterial({ color: "#505d67", roughness: 0.72, metalness: 0.1 })
+      new THREE.MeshStandardMaterial({
+        color: kind === "player" ? "#5f6e78" : "#505d67",
+        roughness: 0.68,
+        metalness: 0.14,
+      })
     );
     lid.position.set(0, 0.56, -0.22);
     lid.rotation.x = -0.85;
@@ -749,9 +823,21 @@ export class ObsoleteRenderer {
     mouth.position.set(0, 0.53, -0.13);
     leftEye.rotation.x = rightEye.rotation.x = mouth.rotation.x = -0.85;
 
-    group.add(base, lid, screen, leftEye, rightEye, mouth);
-    group.userData = { leftEye, rightEye, mouth };
-    return { group, leftEye, rightEye, mouth };
+    const antennaGlow = new THREE.Mesh(
+      new THREE.RingGeometry(0.18, 0.28, 24),
+      new THREE.MeshBasicMaterial({
+        color: kind === "player" ? "#8effd3" : "#ffd37d",
+        transparent: true,
+        opacity: kind === "player" ? 0.28 : 0.14,
+        side: THREE.DoubleSide,
+      })
+    );
+    antennaGlow.rotation.x = -Math.PI / 2;
+    antennaGlow.position.set(0, 0.04, 0.02);
+
+    group.add(base, lid, screen, leftEye, rightEye, mouth, antennaGlow);
+    group.userData = { leftEye, rightEye, mouth, base, lid, screen, antennaGlow };
+    return { group, leftEye, rightEye, mouth, base, lid, screen, antennaGlow };
   }
 
   createNpc(npc) {
@@ -836,6 +922,16 @@ export class ObsoleteRenderer {
     const z = this.toWorldZ(source.y + source.h / 2);
     model.group.position.set(x, 0, z);
     model.group.rotation.y = noTilt ? 0 : source.facing === -1 ? Math.PI * 0.08 : -Math.PI * 0.08;
+
+    if (model.screen) {
+      model.screen.material.color.set(mood === "heroic" ? "#dffef4" : mood === "determined" ? "#b8fff1" : "#9afce3");
+    }
+    if (model.base?.material) {
+      model.base.material.emissiveIntensity = mood === "heroic" ? 0.28 : mood === "determined" ? 0.22 : 0.16;
+    }
+    if (model.antennaGlow?.material) {
+      model.antennaGlow.material.opacity = mood === "heroic" ? 0.46 : mood === "determined" ? 0.36 : 0.24;
+    }
 
     if (!model.leftEye) {
       return;

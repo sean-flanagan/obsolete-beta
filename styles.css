@@ -211,6 +211,41 @@ body {
   backdrop-filter: blur(12px);
 }
 
+.objective-panel {
+  position: absolute;
+  left: 38px;
+  top: 160px;
+  z-index: 2;
+  width: min(360px, calc(100% - 76px));
+  padding: 14px 16px;
+  border: 1px solid rgba(142, 255, 211, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(142, 255, 211, 0.12), rgba(9, 14, 18, 0.82));
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.34);
+}
+
+.objective-panel__label {
+  margin: 0 0 8px;
+  color: var(--teal);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.objective-panel__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.objective-panel__body {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .overlay {
   position: absolute;
   z-index: 3;
@@ -340,6 +375,13 @@ body {
   line-height: 1.55;
 }
 
+.dialogue-panel__prompt {
+  margin: 10px 0 0;
+  color: var(--teal);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
 .cabinet__status {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -408,7 +450,8 @@ code {
 
   .hud,
   .dialogue-panel,
-  .banner {
+  .banner,
+  .objective-panel {
     left: 24px;
     right: 24px;
   }
@@ -420,6 +463,11 @@ code {
 
   .banner {
     top: 156px;
+  }
+
+  .objective-panel {
+    top: 210px;
+    width: auto;
   }
 
   .dialogue-panel {
