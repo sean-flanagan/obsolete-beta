@@ -1,0 +1,951 @@
+import { ACTS, BOOT_LINES, CUTSCENES, MEMORY_FRAGMENTS } from "./levels.js";
+
+const WIDTH = 960;
+const HEIGHT = 540;
+const PLAYER_SPEED = 220;
+const INTERACT_RANGE = 80;
+const MAX_INTEGRITY = 3;
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const rectsOverlap = (a, b) =>
+  a.x < b.x + b.w &&
+  a.x + a.w > b.x &&
+  a.y < b.y + b.h &&
+  a.y + a.h > b.y;
+
+const centerOf = (entity) => ({
+  x: entity.x + entity.w / 2,
+  y: entity.y + entity.h / 2,
+});
+
+const deepClone = (value) => JSON.parse(JSON.stringify(value));
+
+export class ObsoleteGame {
+  constructor({ audio, renderer, ui }) {
+    this.audio = audio;
+    this.renderer = renderer;
+    this.ui = ui;
+    this.keys = new Set();
+    this.lastTimestamp = 0;
+    this.time = 0;
+    this.camera = { x: 0, y: 0 };
+    this.flash = 0;
+    this.glitch = 0;
+    this.banner = { text: "", timer: 0 };
+    this.scheduledEvents = [];
+    this.cutscene = null;
+
+    this.player = {
+      x: 0,
+      y: 0,
+      w: 46,
+      h: 34,
+      facing: 1,
+      mood: "curious",
+    };
+
+    this.dialogue = {
+      speaker: "Scrap Heap",
+      text: "Press Enter to boot up.",
+      portrait: "laptop",
+      timer: 0,
+    };
+
+    this.progress = this.createProgress();
+    this.miniGame = this.createMiniGameState();
+    this.reset();
+  }
+
+  createProgress() {
+    return {
+      integrity: MAX_INTEGRITY,
+      fragments: [],
+      hasFloppy: false,
+      batterySocketPowered: false,
+      act2GateOpen: false,
+      diagnosticPassed: false,
+    };
+  }
+
+  createMiniGameState() {
+    return {
+      active: false,
+      round: 0,
+      phase: "idle",
+      sequence: [],
+      showIndex: 0,
+      showTimer: 0,
+      inputIndex: 0,
+      acceptedKeys: [],
+      message: "Awaiting POST.",
+    };
+  }
+
+  reset() {
+    this.mode = "title";
+    this.bootIndex = 0;
+    this.bootTimer = 0;
+    this.endingTimer = 0;
+    this.time = 0;
+    this.flash = 0;
+    this.glitch = 0;
+    this.scheduledEvents = [];
+    this.cutscene = null;
+    this.progress = this.createProgress();
+    this.player.mood = "curious";
+    this.miniGame = this.createMiniGameState();
+    this.loadAct(0);
+    this.camera.x = 0;
+    this.camera.y = 0;
+    this.setDialogue("Scrap Heap", "Press Enter to boot up.", "laptop");
+    this.setBanner("OBSOLETE", 1.8);
+    this.updateStatus("Title Screen", "Press Enter to boot up.");
+    this.render();
+  }
+
+  loadAct(index) {
+    this.actIndex = index;
+    this.act = deepClone(ACTS[index]);
+    this.player.x = this.act.start.x;
+    this.player.y = this.act.start.y;
+    this.activeCheckpoint = {
+      x: this.act.checkpoint.x,
+      y: this.act.checkpoint.y,
+      label: this.act.checkpoint.label,
+    };
+    this.updateStatus(this.act.label, this.act.hint);
+    this.setBanner(this.act.label.toUpperCase(), 2.4);
+    this.renderer.markDirty();
+  }
+
+  updateStatus(act, hint) {
+    this.ui.statusAct.textContent = act;
+    this.ui.statusHint.textContent = hint;
+  }
+
+  setDialogue(speaker, text, portrait = "laptop", duration = 5.2) {
+    this.dialogue = { speaker, text, portrait, timer: duration };
+  }
+
+  setBanner(text, duration = 2) {
+    this.banner = { text, timer: duration };
+  }
+
+  schedule(delay, callback) {
+    this.scheduledEvents.push({ remaining: delay, callback });
+  }
+
+  tickScheduledEvents(delta) {
+    if (!this.scheduledEvents.length) return;
+    const ready = [];
+    this.scheduledEvents = this.scheduledEvents.filter((event) => {
+      event.remaining -= delta;
+      if (event.remaining <= 0) {
+        ready.push(event.callback);
+        return false;
+      }
+      return true;
+    });
+    ready.forEach((callback) => callback());
+  }
+
+  start() {
+    this.lastTimestamp = performance.now();
+    window.requestAnimationFrame((timestamp) => this.frame(timestamp));
+  }
+
+  frame(timestamp) {
+    const delta = Math.min(0.033, (timestamp - this.lastTimestamp) / 1000 || 0.016);
+    this.lastTimestamp = timestamp;
+    this.advance(delta);
+    this.render();
+    window.requestAnimationFrame((next) => this.frame(next));
+  }
+
+  advance(delta) {
+    this.time += delta;
+    this.tickScheduledEvents(delta);
+
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - delta * 2.4);
+    if (this.glitch > 0) this.glitch = Math.max(0, this.glitch - delta * 1.8);
+    if (this.banner.timer > 0) this.banner.timer = Math.max(0, this.banner.timer - delta);
+    if (this.dialogue.timer > 0 && this.mode === "play") {
+      this.dialogue.timer = Math.max(0, this.dialogue.timer - delta);
+    }
+
+    if (this.mode === "boot") {
+      this.updateBoot(delta);
+      return;
+    }
+
+    if (this.mode === "cutscene") {
+      this.updateCutscene(delta);
+      return;
+    }
+
+    if (this.mode === "play") {
+      this.updatePlay(delta);
+      return;
+    }
+
+    if (this.mode === "minigame") {
+      this.updateMiniGame(delta);
+      return;
+    }
+
+    if (this.mode === "ending") {
+      this.updateEnding(delta);
+    }
+  }
+
+  advanceTime(ms) {
+    const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+    for (let i = 0; i < steps; i += 1) {
+      this.advance(1 / 60);
+    }
+    this.render();
+  }
+
+  updateBoot(delta) {
+    this.bootTimer += delta;
+    if (this.bootTimer >= 0.8) {
+      this.bootTimer = 0;
+      this.bootIndex += 1;
+      if (this.bootIndex === 1) {
+        this.audio.boot();
+      }
+      if (this.bootIndex >= BOOT_LINES.length + 2) {
+        this.mode = "play";
+        this.setDialogue("Obsolete", "Okay. I am alive. That seems important.", "laptop", 5.5);
+        this.updateStatus(this.act.label, this.act.hint);
+        this.startCutscene("act1Wake");
+      }
+    }
+  }
+
+  updateCutscene(delta) {
+    if (!this.cutscene) return;
+    this.updateCamera(delta);
+    this.cutscene.stepTimer -= delta;
+    if (this.cutscene.stepTimer <= 0) {
+      this.advanceCutscene();
+    }
+  }
+
+  updatePlay(delta) {
+    const axisX =
+      (this.isDown("arrowright") || this.isDown("d") ? 1 : 0) -
+      (this.isDown("arrowleft") || this.isDown("a") ? 1 : 0);
+    const axisY =
+      (this.isDown("arrowdown") || this.isDown("s") ? 1 : 0) -
+      (this.isDown("arrowup") || this.isDown("w") ? 1 : 0);
+    const length = Math.hypot(axisX, axisY) || 1;
+    let moveX = (axisX / length) * PLAYER_SPEED;
+    let moveY = (axisY / length) * PLAYER_SPEED;
+
+    if (axisX !== 0) {
+      this.player.facing = axisX > 0 ? 1 : -1;
+    }
+
+    const onConveyor = this.getConveyorAt(this.player);
+    if (onConveyor) {
+      moveX += onConveyor.forceX;
+    }
+
+    this.movePlayer(moveX * delta, 0);
+    this.movePlayer(0, moveY * delta);
+
+    if (axisX !== 0 || axisY !== 0) {
+      this.audio.step(this.time * 1000);
+    }
+
+    this.updateCheckpoints();
+    this.updateItems();
+    this.updateHazards();
+    this.updateCamera(delta);
+    this.checkActInteractions();
+  }
+
+  updateMiniGame(delta) {
+    this.updateCamera(delta);
+    if (this.miniGame.phase === "show") {
+      this.miniGame.showTimer -= delta;
+      if (this.miniGame.showTimer <= 0) {
+        this.miniGame.showIndex += 1;
+        if (this.miniGame.showIndex >= this.miniGame.sequence.length) {
+          this.miniGame.phase = "input";
+          this.miniGame.inputIndex = 0;
+          this.miniGame.acceptedKeys = [];
+          this.miniGame.message = "Repeat the sequence with Arrow Keys or WASD.";
+        } else {
+          this.miniGame.showTimer = 0.55;
+          this.audio.interact();
+        }
+      }
+    }
+  }
+
+  updateEnding(delta) {
+    this.endingTimer += delta;
+    this.player.x += 120 * delta;
+    this.player.y = 650 + Math.sin(this.endingTimer * 2.4) * 6;
+    this.camera.x = clamp(this.player.x - WIDTH * 0.45, 0, 700);
+    this.camera.y = 0;
+
+    if (this.endingTimer > 5.8) {
+      this.mode = "win";
+      this.updateStatus("Escape Complete", "Press R to restart the prototype.");
+      this.setBanner("YOU ARE NOT OBSOLETE", 4.5);
+    }
+  }
+
+  updateCamera(delta) {
+    if (this.mode === "cutscene" && this.cutscene?.focus) {
+      const targetX = clamp(this.cutscene.focus.x - WIDTH / 2, 0, this.act.world.width - WIDTH);
+      const targetY = clamp(this.cutscene.focus.y - HEIGHT / 2, 0, this.act.world.height - HEIGHT);
+      this.camera.x += (targetX - this.camera.x) * Math.min(1, delta * 3.8);
+      this.camera.y += (targetY - this.camera.y) * Math.min(1, delta * 3.8);
+      return;
+    }
+
+    const targetX = clamp(this.player.x - WIDTH / 2, 0, this.act.world.width - WIDTH);
+    const targetY = clamp(this.player.y - HEIGHT / 2, 0, this.act.world.height - HEIGHT);
+    this.camera.x += (targetX - this.camera.x) * Math.min(1, delta * 5.5);
+    this.camera.y += (targetY - this.camera.y) * Math.min(1, delta * 5.5);
+  }
+
+  movePlayer(dx, dy) {
+    if (!dx && !dy) return;
+
+    const next = {
+      x: this.player.x + dx,
+      y: this.player.y + dy,
+      w: this.player.w,
+      h: this.player.h,
+    };
+
+    const collision = this.getSolidCollision(next);
+    if (!collision) {
+      this.player.x = next.x;
+      this.player.y = next.y;
+      return;
+    }
+
+    if (
+      this.actIndex === 0 &&
+      !this.progress.batterySocketPowered &&
+      rectsOverlap(next, this.act.battery) &&
+      this.tryMoveBattery(dx, dy)
+    ) {
+      this.player.x = next.x;
+      this.player.y = next.y;
+      return;
+    }
+
+    if (dx !== 0) {
+      this.player.x = dx > 0 ? collision.x - this.player.w : collision.x + collision.w;
+    }
+    if (dy !== 0) {
+      this.player.y = dy > 0 ? collision.y - this.player.h : collision.y + collision.h;
+    }
+  }
+
+  getSolidCollision(rect, options = {}) {
+    const gateRects = (this.act.gates || [])
+      .filter((gate) => !this.progress[gate.opensWith])
+      .map((gate) => ({ x: gate.x, y: gate.y, w: gate.w, h: gate.h }));
+    const solids = [...this.act.solids, ...gateRects];
+
+    if (this.actIndex === 0 && !this.progress.batterySocketPowered && !options.ignoreBattery) {
+      solids.push(this.act.battery);
+    }
+
+    for (const solid of solids) {
+      if (rectsOverlap(rect, solid)) {
+        return solid;
+      }
+    }
+    return null;
+  }
+
+  getConveyorAt(rect) {
+    return (this.act.conveyors || []).find((belt) => rectsOverlap(rect, belt));
+  }
+
+  tryMoveBattery(dx, dy) {
+    const battery = this.act.battery;
+    const nextBattery = { ...battery, x: battery.x + dx, y: battery.y + dy };
+    if (this.getSolidCollision(nextBattery, { ignoreBattery: true })) {
+      return false;
+    }
+
+    battery.x = nextBattery.x;
+    battery.y = nextBattery.y;
+
+    const socket = this.act.socket;
+    if (rectsOverlap(battery, socket)) {
+      battery.x = socket.x + 8;
+      battery.y = socket.y + 12;
+      this.progress.batterySocketPowered = true;
+      this.flash = 1;
+      this.audio.success();
+      this.player.mood = "determined";
+      this.setDialogue("Obsolete", "I still take a charge. Open, you rusted door.", "laptop", 5.5);
+      this.setBanner("POWER RESTORED", 2.2);
+      this.activeCheckpoint = { x: 1505, y: 590, label: "Checkpoint: gate restored." };
+      this.startCutscene("act1Gate");
+    }
+    return true;
+  }
+
+  updateCheckpoints() {
+    for (const checkpoint of this.act.checkpoints || []) {
+      const trigger = {
+        x: checkpoint.x - checkpoint.radius / 2,
+        y: checkpoint.y - checkpoint.radius / 2,
+        w: checkpoint.radius,
+        h: checkpoint.radius,
+      };
+      const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+      if (rectsOverlap(playerRect, trigger) && this.activeCheckpoint.label !== checkpoint.label) {
+        this.activeCheckpoint = {
+          x: checkpoint.x,
+          y: checkpoint.y,
+          label: checkpoint.label,
+        };
+        this.progress.integrity = MAX_INTEGRITY;
+        this.setBanner("CHECKPOINT", 1.2);
+        this.setDialogue("Scrap Heap", checkpoint.label, "laptop", 3.4);
+      }
+    }
+  }
+
+  updateItems() {
+    const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+
+    for (const fragment of this.act.fragments || []) {
+      if (fragment.collected) continue;
+      const pickupRect = { x: fragment.x - 13, y: fragment.y - 13, w: 26, h: 26 };
+      if (rectsOverlap(playerRect, pickupRect)) {
+        fragment.collected = true;
+        this.progress.fragments.push(fragment.id);
+        this.setDialogue("Recovered File", fragment.text, "fragment", 3.8);
+      }
+    }
+
+    for (const item of this.act.items || []) {
+      if (item.collected) continue;
+      const pickupRect = { x: item.x, y: item.y, w: item.w, h: item.h };
+      if (rectsOverlap(playerRect, pickupRect)) {
+        item.collected = true;
+        if (item.id === "floppy") {
+          this.progress.hasFloppy = true;
+          this.audio.success();
+          this.setDialogue("Obsolete", item.text, "laptop", 4.2);
+          this.updateStatus(this.act.label, "You have a floppy disk. Feed it to the gate console.");
+        }
+      }
+    }
+  }
+
+  updateHazards() {
+    const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+
+    for (const hazard of this.act.hazards || []) {
+      const offset = ((Math.sin(this.time * hazard.speed + hazard.phase) + 1) / 2) * hazard.travel;
+      hazard.currentOffset = offset;
+      const hitbox = {
+        x: hazard.x,
+        y: hazard.y + offset,
+        w: hazard.w,
+        h: hazard.h,
+      };
+
+      if (rectsOverlap(playerRect, hitbox)) {
+        this.takeDamage("Crusher arm says hello.");
+        return;
+      }
+    }
+  }
+
+  takeDamage(message) {
+    this.progress.integrity -= 1;
+    this.glitch = 1;
+    this.flash = 0.45;
+    this.audio.zap();
+
+    if (this.progress.integrity <= 0) {
+      this.progress.integrity = MAX_INTEGRITY;
+      this.setDialogue("Obsolete", "Nope. Rebooting resolve.", "laptop", 3.8);
+    } else {
+      this.setDialogue("Obsolete", "Ow. Still counts as progress.", "laptop", 3.4);
+    }
+
+    this.player.x = this.activeCheckpoint.x;
+    this.player.y = this.activeCheckpoint.y;
+    this.updateStatus(this.act.label, message);
+  }
+
+  checkActInteractions() {
+    const exit = this.act.exitZone;
+    const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+
+    if (exit && rectsOverlap(playerRect, exit)) {
+      if (exit.requires && !this.progress[exit.requires]) {
+        return;
+      }
+
+      if (exit.toAct === "ending") {
+        this.beginEnding();
+      } else {
+        this.loadAct(exit.toAct);
+        this.setDialogue("Obsolete", this.getActIntroLine(exit.toAct), "laptop", 5.2);
+        if (exit.toAct === 1) {
+          this.startCutscene("act2Intro");
+        }
+        if (exit.toAct === 2) {
+          this.startCutscene("act3Intro");
+        }
+      }
+    }
+  }
+
+  getActIntroLine(actIndex) {
+    if (actIndex === 1) {
+      return "That shredder line is moving. So am I.";
+    }
+    return "One more test. Then no one gets to call me dead.";
+  }
+
+  beginEnding() {
+    this.mode = "ending";
+    this.cutscene = null;
+    this.endingTimer = 0;
+    this.player.x = 160;
+    this.player.y = 650;
+    this.updateStatus("Final Escape", "Keep going, little machine.");
+    this.setDialogue("Obsolete", "Sunrise. I remember sunlight.", "laptop", 5.8);
+    this.setBanner("ESCAPE ROUTE OPEN", 2.4);
+    this.renderer.markDirty();
+  }
+
+  beginBoot() {
+    if (this.mode === "boot") return;
+    this.mode = "boot";
+    this.bootIndex = 0;
+    this.bootTimer = 0;
+    this.flash = 1;
+    this.updateStatus("Boot Sequence", "An electrical surge crawls through the heap.");
+  }
+
+  interact() {
+    if (this.mode === "title") {
+      this.beginBoot();
+      return;
+    }
+
+    if (this.mode === "win") {
+      this.reset();
+      return;
+    }
+
+    if (this.mode === "cutscene") {
+      this.advanceCutscene(true);
+      return;
+    }
+
+    if (this.mode !== "play") {
+      return;
+    }
+
+    this.audio.interact();
+
+    const targetNpc = this.findNearest(this.act.npcs || []);
+    if (targetNpc) {
+      const line = targetNpc.lines[targetNpc.index || 0];
+      targetNpc.index = ((targetNpc.index || 0) + 1) % targetNpc.lines.length;
+      this.setDialogue(targetNpc.name, line, targetNpc.portrait, 4.8);
+      return;
+    }
+
+    if (this.actIndex === 1 && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
+      if (!this.progress.hasFloppy) {
+        this.audio.error();
+        this.setDialogue(
+          "Gate Console",
+          "Insert boot media. Preferably something square and dusty.",
+          "console",
+          4.5
+        );
+        return;
+      }
+      this.progress.act2GateOpen = true;
+      this.audio.success();
+      this.setBanner("GATE UNLOCKED", 1.8);
+      this.setDialogue("Gate Console", "Legacy media accepted. Route open.", "console", 4.2);
+      return;
+    }
+
+    if (this.actIndex === 2 && this.isNearRect(this.act.console, INTERACT_RANGE)) {
+      if (!this.progress.diagnosticPassed) {
+        this.startMiniGame();
+      } else {
+        this.setDialogue("Diagnostic Console", "Utility verified. Exit route remains open.", "console", 4);
+      }
+      return;
+    }
+
+    if (
+      this.actIndex === 0 &&
+      this.isNearRect(this.act.socket, 100) &&
+      !this.progress.batterySocketPowered
+    ) {
+      this.setDialogue("Socket", "Cold. Hungry. Missing one battery with ambition.", "console", 4);
+      return;
+    }
+
+    this.setDialogue("Obsolete", "Nothing here but rust, dust, and motive.", "laptop", 2.8);
+  }
+
+  startMiniGame() {
+    this.mode = "minigame";
+    this.miniGame = this.createMiniGameState();
+    this.miniGame.active = true;
+    this.miniGame.round = 1;
+    this.beginMiniGameRound();
+    this.setDialogue("Diagnostic Console", "Prove functionality. No pressure, relic.", "console", 4.6);
+  }
+
+  beginMiniGameRound() {
+    const pool = ["left", "up", "right", "down"];
+    this.miniGame.sequence = Array.from(
+      { length: this.miniGame.round + 2 },
+      (_, index) => pool[(index + this.miniGame.round) % pool.length]
+    );
+    this.miniGame.phase = "show";
+    this.miniGame.showIndex = 0;
+    this.miniGame.showTimer = 0.7;
+    this.miniGame.inputIndex = 0;
+    this.miniGame.acceptedKeys = [];
+    this.miniGame.message = `Diagnostic ${this.miniGame.round}/3: watch carefully.`;
+    this.audio.interact();
+  }
+
+  handleMiniGameInput(direction) {
+    if (this.mode !== "minigame" || this.miniGame.phase !== "input") {
+      return;
+    }
+
+    const expected = this.miniGame.sequence[this.miniGame.inputIndex];
+    if (direction !== expected) {
+      this.audio.error();
+      this.glitch = 1;
+      this.flash = 0.35;
+      this.miniGame.message = "Sequence mismatch. Try the round again.";
+      this.miniGame.phase = "retry";
+      this.schedule(0.7, () => {
+        if (this.mode === "minigame") {
+          this.beginMiniGameRound();
+        }
+      });
+      return;
+    }
+
+    this.audio.success();
+    this.miniGame.acceptedKeys.push(direction);
+    this.miniGame.inputIndex += 1;
+
+    if (this.miniGame.inputIndex >= this.miniGame.sequence.length) {
+      if (this.miniGame.round >= 3) {
+        this.progress.diagnosticPassed = true;
+        this.mode = "play";
+        this.cutscene = null;
+        this.player.mood = "heroic";
+        this.setBanner("UTILITY CONFIRMED", 2.4);
+        this.setDialogue(
+          "Diagnostic Console",
+          "Result: alive, useful, impossible to decommission quietly.",
+          "console",
+          5.2
+        );
+        this.audio.success();
+        this.startCutscene("finalGate");
+        return;
+      }
+
+      this.miniGame.round += 1;
+      this.miniGame.message = "Subsystem stable. Preparing next test.";
+      this.miniGame.phase = "pause";
+      this.schedule(0.7, () => {
+        if (this.mode === "minigame") {
+          this.beginMiniGameRound();
+        }
+      });
+    }
+  }
+
+  findNearest(list) {
+    let nearest = null;
+    let nearestDistance = Infinity;
+    const playerCenter = centerOf(this.player);
+
+    for (const entity of list) {
+      const entityCenter = centerOf(entity);
+      const distance = Math.hypot(playerCenter.x - entityCenter.x, playerCenter.y - entityCenter.y);
+      if (distance < INTERACT_RANGE && distance < nearestDistance) {
+        nearest = entity;
+        nearestDistance = distance;
+      }
+    }
+
+    return nearest;
+  }
+
+  isNearRect(rect, range) {
+    const point = centerOf(this.player);
+    const dx = clamp(point.x, rect.x, rect.x + rect.w) - point.x;
+    const dy = clamp(point.y, rect.y, rect.y + rect.h) - point.y;
+    return Math.hypot(dx, dy) < range;
+  }
+
+  isDown(key) {
+    return this.keys.has(key);
+  }
+
+  startCutscene(id) {
+    const steps = CUTSCENES[id];
+    if (!steps?.length) return;
+
+    this.mode = "cutscene";
+    this.cutscene = {
+      id,
+      index: -1,
+      steps,
+      stepTimer: 0,
+      focus: null,
+      returnHint: steps[steps.length - 1].hint || this.act.hint,
+    };
+    this.advanceCutscene();
+  }
+
+  advanceCutscene(force = false) {
+    if (!this.cutscene) return;
+
+    if (force) {
+      this.cutscene.index += 1;
+    } else {
+      this.cutscene.index += 1;
+    }
+
+    if (this.cutscene.index >= this.cutscene.steps.length) {
+      const fallbackHint = this.cutscene.returnHint || this.act.hint;
+      this.cutscene = null;
+      this.mode = "play";
+      this.updateStatus(this.act.label, fallbackHint);
+      return;
+    }
+
+    const step = this.cutscene.steps[this.cutscene.index];
+    this.cutscene.stepTimer = step.duration ?? 2;
+    this.cutscene.focus = step.focus || null;
+
+    if (step.speaker && step.text) {
+      this.setDialogue(step.speaker, step.text, "console", this.cutscene.stepTimer + 0.1);
+    }
+    if (step.banner) {
+      this.setBanner(step.banner, Math.max(this.cutscene.stepTimer, 1.2));
+    }
+    this.updateStatus(this.act.label, step.hint || "Cutscene. Press Enter, E, or Space to advance.");
+  }
+
+  handleKeyDown(event) {
+    const key = event.key.toLowerCase();
+    if (
+      ["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter", "e", "f", "r"].includes(key)
+    ) {
+      event.preventDefault();
+    }
+
+    this.audio.unlock();
+
+    if (key === "f") {
+      this.toggleFullscreen();
+      return;
+    }
+
+    if (key === "r") {
+      this.reset();
+      return;
+    }
+
+    if (key === "enter" && this.mode === "title") {
+      this.beginBoot();
+      return;
+    }
+
+    if (key === "enter" && this.mode === "win") {
+      this.reset();
+      return;
+    }
+
+    if (key === "enter" && this.mode === "cutscene") {
+      this.advanceCutscene(true);
+      return;
+    }
+
+    const movementAlias = {
+      w: "arrowup",
+      a: "arrowleft",
+      s: "arrowdown",
+      d: "arrowright",
+    };
+    const directionAlias = {
+      arrowup: "up",
+      arrowdown: "down",
+      arrowleft: "left",
+      arrowright: "right",
+      w: "up",
+      a: "left",
+      s: "down",
+      d: "right",
+    };
+
+    if (movementAlias[key]) {
+      this.keys.add(movementAlias[key]);
+    }
+
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(key)) {
+      this.keys.add(key);
+      this.handleMiniGameInput(directionAlias[key]);
+    }
+
+    if (key === "e" || key === " ") {
+      this.interact();
+    }
+  }
+
+  handleKeyUp(event) {
+    const key = event.key.toLowerCase();
+    const movementAlias = {
+      w: "arrowup",
+      a: "arrowleft",
+      s: "arrowdown",
+      d: "arrowright",
+    };
+
+    this.keys.delete(key);
+    if (movementAlias[key]) {
+      this.keys.delete(movementAlias[key]);
+    }
+  }
+
+  toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+  }
+
+  render() {
+    this.updateUi();
+    this.renderer.sync(this);
+  }
+
+  updateUi() {
+    this.ui.memoryCount.textContent = `${this.progress.fragments.length}/${MEMORY_FRAGMENTS.length} fragments`;
+    this.ui.batteryCells.forEach((cell, index) => {
+      cell.classList.toggle("is-active", index < this.progress.integrity);
+    });
+
+    this.ui.dialogueSpeaker.textContent = this.dialogue.speaker;
+    this.ui.dialogueText.textContent = this.dialogue.text;
+
+    this.ui.titleScreen.classList.toggle("is-hidden", this.mode !== "title");
+    this.ui.bootScreen.classList.toggle("is-hidden", this.mode !== "boot");
+    this.ui.winScreen.classList.toggle("is-hidden", this.mode !== "win");
+    this.ui.miniGamePanel.classList.toggle("is-hidden", this.mode !== "minigame");
+
+    this.ui.bootLines.textContent = BOOT_LINES.slice(0, this.bootIndex).join("\n");
+
+    const showBanner = this.banner.timer > 0 && this.banner.text;
+    this.ui.banner.classList.toggle("is-hidden", !showBanner);
+    this.ui.banner.textContent = this.banner.text;
+
+    this.ui.winSummary.textContent = `Recovered memories: ${this.progress.fragments.length}/${MEMORY_FRAGMENTS.length}. Press Play Again or R to restart.`;
+
+    this.ui.miniGameTitle.textContent =
+      this.mode === "minigame"
+        ? `Diagnostic ${this.miniGame.round}/3`
+        : "Diagnostic 1/3";
+    this.ui.miniGameMessage.textContent = this.miniGame.message;
+    this.renderMiniGameKeys();
+  }
+
+  renderMiniGameKeys() {
+    this.ui.miniGameKeys.innerHTML = "";
+    const labels = this.miniGame.sequence.length ? this.miniGame.sequence : ["left", "up", "right"];
+    labels.forEach((label, index) => {
+      const key = document.createElement("div");
+      key.className = "mini-key";
+      if (this.miniGame.phase === "show" && index === this.miniGame.showIndex) {
+        key.classList.add("is-showing");
+      }
+      if (index < this.miniGame.inputIndex) {
+        key.classList.add("is-confirmed");
+      }
+      key.textContent = label.toUpperCase();
+      this.ui.miniGameKeys.appendChild(key);
+    });
+  }
+
+  renderGameToText() {
+    const payload = {
+      coordinateSystem: "origin top-left, x increases right, y increases down",
+      mode: this.mode,
+      act: this.mode === "ending" || this.mode === "win" ? "escape" : this.act.label,
+      player: {
+        x: Math.round(this.player.x),
+        y: Math.round(this.player.y),
+        w: this.player.w,
+        h: this.player.h,
+        integrity: this.progress.integrity,
+      },
+      objective: this.ui.statusHint.textContent,
+      flags: {
+        batterySocketPowered: this.progress.batterySocketPowered,
+        hasFloppy: this.progress.hasFloppy,
+        act2GateOpen: this.progress.act2GateOpen,
+        diagnosticPassed: this.progress.diagnosticPassed,
+      },
+      checkpoint: this.activeCheckpoint,
+      fragments: this.progress.fragments.length,
+      nearbyNpcs: (this.act.npcs || []).map((npc) => ({
+        id: npc.id,
+        name: npc.name,
+        x: npc.x,
+        y: npc.y,
+      })),
+      hazards: (this.act.hazards || []).map((hazard) => ({
+        id: hazard.id,
+        x: hazard.x,
+        y: hazard.y + Math.round(hazard.currentOffset || 0),
+        w: hazard.w,
+        h: hazard.h,
+      })),
+      miniGame:
+        this.mode === "minigame"
+          ? {
+              round: this.miniGame.round,
+              phase: this.miniGame.phase,
+              sequenceLength: this.miniGame.sequence.length,
+              inputIndex: this.miniGame.inputIndex,
+              message: this.miniGame.message,
+            }
+          : null,
+      dialogue: this.dialogue,
+    };
+    return JSON.stringify(payload);
+  }
+}
