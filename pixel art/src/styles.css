@@ -1,0 +1,130 @@
+:root {
+  --ink: #18221a;
+  --moss: #5f8f45;
+  --leaf: #8ebf55;
+  --gold: #f2c14e;
+  --cream: #f5edc8;
+  --shadow: rgba(12, 20, 14, 0.45);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at 25% 20%, rgba(242, 193, 78, 0.24), transparent 26rem),
+    radial-gradient(circle at 80% 75%, rgba(95, 143, 69, 0.38), transparent 22rem),
+    linear-gradient(145deg, #21331f 0%, #101912 52%, #07100c 100%);
+  color: var(--cream);
+  font-family: Georgia, "Times New Roman", serif;
+  overflow: hidden;
+}
+
+#game-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+#game-root {
+  position: relative;
+  box-shadow: 0 28px 70px var(--shadow), 0 0 0 6px rgba(245, 237, 200, 0.08);
+  border-radius: 18px;
+  overflow: hidden;
+  animation: rise-in 700ms ease-out both;
+}
+
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+#hud {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 2px solid rgba(245, 237, 200, 0.22);
+  border-radius: 999px;
+  background: rgba(16, 25, 18, 0.72);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  text-shadow: 0 2px 0 #000;
+}
+
+.brand {
+  color: var(--gold);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+#hud-line {
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+#message-card {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  width: min(680px, calc(100vw - 28px));
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 2px solid rgba(242, 193, 78, 0.46);
+  background: rgba(19, 30, 20, 0.88);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.42);
+  text-align: center;
+  line-height: 1.45;
+  backdrop-filter: blur(10px);
+}
+
+.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 720px) {
+  #game-shell {
+    padding: 8px;
+  }
+
+  #hud {
+    top: 8px;
+    max-width: calc(100vw - 16px);
+    gap: 8px;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  #hud-line {
+    font-size: 13px;
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "props": {
+    "cardboard_boxes": "/assets/starter-pack/CardboardBoxes_1.gltf",
+    "pipes": "/assets/starter-pack/Pipes.gltf",
+    "trash_container": "/assets/starter-pack/TrashContainer.gltf",
+    "fence_long": "/assets/starter-pack/Fence_Long.gltf"
+  }
+}
