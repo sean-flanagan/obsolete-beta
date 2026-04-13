@@ -426,6 +426,7 @@ export class ObsoleteRenderer {
           : game.mode === "ending" || game.mode === "win"
             ? 1.15 + pulse * 0.18
             : 1.35 + pulse * 0.22;
+    this.heroLight.intensity += game.powerSurge * 0.55 + game.triumph * 0.22;
     this.heroLight.distance = game.mode === "ending" || game.mode === "win" ? 12 : titleMode ? 16 : 14;
     this.heroLightGlow.material.opacity =
       game.mode === "boot"
@@ -657,8 +658,10 @@ export class ObsoleteRenderer {
     this.dynamic.checkpoint.material.opacity = 0.34 + Math.sin(game.time * 4) * 0.12;
     this.dynamic.checkpoint.scale.setScalar(1 + pulse * 0.18);
 
-    this.renderer.domElement.style.filter = `saturate(${game.mode === "boot" ? 1.15 : 1}) brightness(${1 + game.flash * 0.18})`;
-    this.mount.style.transform = game.glitch > 0 ? `translateX(${Math.sin(game.time * 60) * game.glitch * 2}px)` : "";
+    this.renderer.domElement.style.filter = `saturate(${game.mode === "boot" ? 1.15 : 1 + game.powerSurge * 0.28}) brightness(${1 + game.flash * 0.18 + game.triumph * 0.08}) contrast(${1 + game.impact * 0.08})`;
+    const shakeX = Math.sin(game.time * 60) * game.glitch * 2 + Math.sin(game.time * 90) * game.impact * 6;
+    const shakeY = Math.cos(game.time * 70) * game.impact * 2.5;
+    this.mount.style.transform = game.glitch > 0 || game.impact > 0 ? `translate(${shakeX}px, ${shakeY}px)` : "";
   }
 
   applyPalette(game) {

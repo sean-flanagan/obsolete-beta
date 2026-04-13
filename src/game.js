@@ -32,6 +32,9 @@ export class ObsoleteGame {
     this.camera = { x: 0, y: 0 };
     this.flash = 0;
     this.glitch = 0;
+    this.impact = 0;
+    this.powerSurge = 0;
+    this.triumph = 0;
     this.banner = { text: "", timer: 0 };
     this.scheduledEvents = [];
     this.cutscene = null;
@@ -93,6 +96,9 @@ export class ObsoleteGame {
     this.time = 0;
     this.flash = 0;
     this.glitch = 0;
+    this.impact = 0;
+    this.powerSurge = 0;
+    this.triumph = 0;
     this.scheduledEvents = [];
     this.cutscene = null;
     this.interactionFocus = null;
@@ -312,6 +318,9 @@ export class ObsoleteGame {
 
     if (this.flash > 0) this.flash = Math.max(0, this.flash - delta * 2.4);
     if (this.glitch > 0) this.glitch = Math.max(0, this.glitch - delta * 1.8);
+    if (this.impact > 0) this.impact = Math.max(0, this.impact - delta * 2.8);
+    if (this.powerSurge > 0) this.powerSurge = Math.max(0, this.powerSurge - delta * 1.4);
+    if (this.triumph > 0) this.triumph = Math.max(0, this.triumph - delta * 0.9);
     if (this.banner.timer > 0) this.banner.timer = Math.max(0, this.banner.timer - delta);
     if (this.dialogue.timer > 0 && this.mode === "play") {
       this.dialogue.timer = Math.max(0, this.dialogue.timer - delta);
@@ -533,6 +542,8 @@ export class ObsoleteGame {
       battery.y = socket.y + 12;
       this.progress.batterySocketPowered = true;
       this.flash = 1;
+      this.impact = 0.7;
+      this.powerSurge = 1;
       this.audio.success();
       this.player.mood = "determined";
       this.setDialogue("Obsolete", "I still take a charge. Open, you rusted door.", "laptop", 5.5);
@@ -560,6 +571,8 @@ export class ObsoleteGame {
         };
         this.progress.integrity = MAX_INTEGRITY;
         this.setBanner("CHECKPOINT", 1.2);
+        this.flash = Math.max(this.flash, 0.22);
+        this.triumph = Math.max(this.triumph, 0.18);
         this.setDialogue("Scrap Heap", checkpoint.label, "laptop", 3.4);
       }
     }
@@ -574,6 +587,8 @@ export class ObsoleteGame {
       if (rectsOverlap(playerRect, pickupRect)) {
         fragment.collected = true;
         this.progress.fragments.push(fragment.id);
+        this.flash = Math.max(this.flash, 0.24);
+        this.triumph = Math.max(this.triumph, 0.25);
         this.setDialogue("Recovered File", fragment.text, "fragment", 3.8);
       }
     }
@@ -586,6 +601,8 @@ export class ObsoleteGame {
         if (item.id === "floppy") {
           this.progress.hasFloppy = true;
           this.audio.success();
+          this.flash = Math.max(this.flash, 0.3);
+          this.triumph = Math.max(this.triumph, 0.32);
           this.setDialogue("Obsolete", item.text, "laptop", 4.2);
           this.progress.act2UnderstoodGate = true;
           this.updateStatus(this.act.label, "You have a floppy disk. Feed it to the gate console.");
@@ -618,6 +635,7 @@ export class ObsoleteGame {
     this.progress.integrity -= 1;
     this.glitch = 1;
     this.flash = 0.45;
+    this.impact = 1;
     this.audio.zap();
 
     if (this.progress.integrity <= 0) {
@@ -667,6 +685,9 @@ export class ObsoleteGame {
     this.mode = "ending";
     this.cutscene = null;
     this.endingTimer = 0;
+    this.flash = 0.55;
+    this.powerSurge = 0.7;
+    this.triumph = 0.85;
     this.player.x = 160;
     this.player.y = 650;
     this.updateStatus("Final Escape", "Keep going, little machine.");
@@ -681,6 +702,8 @@ export class ObsoleteGame {
     this.bootIndex = 0;
     this.bootTimer = 0;
     this.flash = 1;
+    this.powerSurge = 1;
+    this.impact = 0.25;
     this.updateStatus("Boot Sequence", "An electrical surge crawls through the heap.");
   }
 
@@ -731,6 +754,9 @@ export class ObsoleteGame {
       this.progress.act2GateOpen = true;
       this.progress.act2UnderstoodGate = true;
       this.audio.success();
+      this.flash = Math.max(this.flash, 0.45);
+      this.impact = Math.max(this.impact, 0.45);
+      this.powerSurge = Math.max(this.powerSurge, 0.7);
       this.setBanner("GATE UNLOCKED", 1.8);
       this.setDialogue("Gate Console", "Legacy media accepted. Route open.", "console", 4.2);
       return;
@@ -762,6 +788,7 @@ export class ObsoleteGame {
     this.miniGame = this.createMiniGameState();
     this.miniGame.active = true;
     this.miniGame.round = 1;
+    this.powerSurge = Math.max(this.powerSurge, 0.35);
     this.beginMiniGameRound();
     this.setDialogue("Diagnostic Console", "Prove functionality. No pressure, relic.", "console", 4.6);
   }
@@ -802,6 +829,8 @@ export class ObsoleteGame {
     }
 
     this.audio.success();
+    this.flash = Math.max(this.flash, 0.16);
+    this.powerSurge = Math.max(this.powerSurge, 0.18);
     this.miniGame.acceptedKeys.push(direction);
     this.miniGame.inputIndex += 1;
 
@@ -811,6 +840,10 @@ export class ObsoleteGame {
         this.mode = "play";
         this.cutscene = null;
         this.player.mood = "heroic";
+        this.flash = 0.75;
+        this.impact = 0.55;
+        this.powerSurge = 0.9;
+        this.triumph = 1;
         this.setBanner("UTILITY CONFIRMED", 2.4);
         this.setDialogue(
           "Diagnostic Console",
