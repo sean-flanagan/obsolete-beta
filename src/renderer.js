@@ -116,6 +116,51 @@ export class ObsoleteRenderer {
     );
     this.sunHalo.position.set(0, 9, -24);
     this.fxRoot.add(this.sunHalo);
+
+    this.dustField = new THREE.Group();
+    this.dustMotes = [];
+    for (let i = 0; i < 30; i += 1) {
+      const mote = new THREE.Mesh(
+        new THREE.SphereGeometry(0.035 + (i % 3) * 0.014, 6, 6),
+        new THREE.MeshBasicMaterial({
+          color: i % 4 === 0 ? "#ffd9a6" : "#baf7e4",
+          transparent: true,
+          opacity: 0.08 + (i % 5) * 0.012,
+        })
+      );
+      mote.userData = {
+        baseX: (i % 6) * 2.2 - 5.2,
+        baseY: 0.8 + (i % 5) * 0.52,
+        baseZ: -Math.floor(i / 6) * 1.7 + 1.2,
+        drift: 0.25 + (i % 4) * 0.06,
+        phase: i * 0.73,
+      };
+      this.dustField.add(mote);
+      this.dustMotes.push(mote);
+    }
+    this.fxRoot.add(this.dustField);
+
+    this.sparkField = new THREE.Group();
+    this.atmosphereSparks = [];
+    for (let i = 0; i < 3; i += 1) {
+      const spark = new THREE.Mesh(
+        new THREE.SphereGeometry(0.11, 8, 8),
+        new THREE.MeshBasicMaterial({
+          color: i === 0 ? "#ffd37d" : "#8effd3",
+          transparent: true,
+          opacity: 0.18,
+        })
+      );
+      spark.userData = {
+        baseX: -2.8 + i * 3.6,
+        baseY: 1.4 + i * 0.35,
+        baseZ: -2.3 - i * 0.8,
+        phase: i * 1.37,
+      };
+      this.sparkField.add(spark);
+      this.atmosphereSparks.push(spark);
+    }
+    this.fxRoot.add(this.sparkField);
   }
 
   setupDynamicObjects() {
@@ -390,6 +435,62 @@ export class ObsoleteRenderer {
           : game.mode === "ending" || game.mode === "win"
             ? 0.1 + pulse * 0.03
             : 0.12 + pulse * 0.04;
+    this.sunHalo.material.opacity =
+      (game.mode === "ending" || game.mode === "win" ? 0.12 : titleMode ? 0.13 : 0.08) +
+      pulse * (titleMode ? 0.035 : 0.015);
+    this.floorGlow.material.opacity =
+      (game.mode === "ending" || game.mode === "win" ? 0.16 : titleMode ? 0.22 : 0.18) +
+      Math.sin(game.time * 1.8) * 0.015;
+    this.dustField.position.set(playerX + (titleMode ? 0.8 : 0), 0, playerZ + (titleMode ? -0.3 : 0));
+    this.dustMotes.forEach((mote, index) => {
+      const { baseX, baseY, baseZ, drift, phase } = mote.userData;
+      mote.position.set(
+        baseX + Math.sin(game.time * drift + phase) * 0.55,
+        baseY + Math.sin(game.time * (0.5 + drift) + phase) * 0.22,
+        baseZ + Math.cos(game.time * (0.38 + drift) + phase) * 0.35
+      );
+      mote.material.opacity = (titleMode ? 0.12 : 0.08) + (Math.sin(game.time * 0.9 + index) + 1) * 0.025;
+      mote.scale.setScalar(titleMode ? 1.2 : 1);
+    });
+    this.sparkField.position.set(playerX + (titleMode ? 1.5 : 0), 0, playerZ + (titleMode ? -0.5 : 0));
+    this.atmosphereSparks.forEach((spark, index) => {
+      const flicker = Math.max(0, Math.sin(game.time * (3.8 + index) + spark.userData.phase));
+      spark.position.set(
+        spark.userData.baseX,
+        spark.userData.baseY + flicker * 0.2,
+        spark.userData.baseZ
+      );
+      spark.material.opacity = 0.05 + flicker * (titleMode ? 0.28 : 0.2);
+      spark.scale.setScalar(0.8 + flicker * 0.9);
+    });
+    if (this.dynamic.gateConsole.userData.screenGlow) {
+      const consolePulse = 0.09 + Math.max(0, Math.sin(game.time * 3.4)) * 0.12;
+      this.dynamic.gateConsole.userData.screenGlow.material.opacity = consolePulse;
+      this.dynamic.gateConsole.userData.led.material.color.set(Math.sin(game.time * 3.4) > 0 ? "#ffd37d" : "#6f5f36");
+    }
+    if (this.dynamic.finalConsole.userData.screenGlow) {
+      const finalPulse = 0.08 + Math.max(0, Math.sin(game.time * 2.8 + 0.7)) * 0.14;
+      this.dynamic.finalConsole.userData.screenGlow.material.opacity = finalPulse;
+      this.dynamic.finalConsole.userData.led.material.color.set(Math.sin(game.time * 2.8 + 0.7) > 0 ? "#8effd3" : "#23433b");
+    }
+    this.dynamic.decor.forEach((mesh) => {
+      if (mesh.userData?.effectType !== "spark") return;
+      const flicker = Math.max(0, Math.sin(game.time * 5.6 + mesh.userData.phase));
+      mesh.material.opacity = 0.18 + flicker * 0.75;
+      mesh.scale.setScalar(0.9 + flicker * 0.7);
+    });
+    if (this.dynamic.player.powerLed?.material) {
+      this.dynamic.player.powerLed.material.color.set(
+        game.mode === "boot"
+          ? Math.sin(game.time * 8) > 0 ? "#d8fff3" : "#5aa690"
+          : titleMode
+            ? Math.sin(game.time * 3.6) > 0 ? "#d8fff3" : "#7de8ca"
+            : "#8effd3"
+      );
+    }
+    if (this.dynamic.player.screenGlow?.material) {
+      this.dynamic.player.screenGlow.material.opacity += game.mode === "boot" ? Math.max(0, Math.sin(game.time * 8)) * 0.08 : 0;
+    }
     if (game.mode === "ending" || game.mode === "win") {
       this.updateLaptop(this.dynamic.player, game.player, game.player.mood, true);
       this.dynamic.player.group.scale.setScalar(1.08);
@@ -451,6 +552,9 @@ export class ObsoleteRenderer {
     if (game.act.gateConsole) {
       this.positionBox(this.dynamic.gateConsole, game.act.gateConsole, 0.9);
       this.dynamic.gateConsole.visible = true;
+      if (this.dynamic.gateConsole.userData.screen) {
+        this.dynamic.gateConsole.userData.screen.material.color.set(game.progress.hasFloppy ? "#c9fff1" : "#9afce3");
+      }
     } else {
       this.dynamic.gateConsole.visible = false;
     }
@@ -458,6 +562,9 @@ export class ObsoleteRenderer {
     if (game.act.console) {
       this.positionBox(this.dynamic.finalConsole, game.act.console, 0.9);
       this.dynamic.finalConsole.visible = true;
+      if (this.dynamic.finalConsole.userData.screen) {
+        this.dynamic.finalConsole.userData.screen.material.color.set(game.progress.diagnosticPassed ? "#d8fff3" : "#9afce3");
+      }
     } else {
       this.dynamic.finalConsole.visible = false;
     }
@@ -465,6 +572,12 @@ export class ObsoleteRenderer {
     this.dynamic.gates.forEach(({ source, mesh }) => {
       mesh.visible = !game.progress[source.opensWith];
       this.positionBox(mesh, source, 2.2);
+      if (mesh.material) {
+        mesh.material.emissiveIntensity = 0.12 + pulse * 0.1;
+      }
+      if (mesh.userData?.beacon) {
+        mesh.userData.beacon.material.opacity = 0.18 + pulse * 0.18;
+      }
     });
 
     this.dynamic.hazards.forEach(({ source, mesh }) => {
@@ -475,18 +588,38 @@ export class ObsoleteRenderer {
         h: source.h,
       };
       this.positionBox(mesh, rect, 2.4);
+      if (mesh.userData?.arm?.material) {
+        mesh.userData.arm.material.emissiveIntensity = 0.16 + pulse * 0.22;
+      }
+      if (mesh.userData?.warning) {
+        mesh.userData.warning.material.opacity = 0.16 + pulse * 0.24;
+      }
     });
 
     this.dynamic.items.forEach(({ source, mesh }) => {
       mesh.visible = !source.collected;
       mesh.position.set(this.toWorldX(source.x + source.w / 2), 0.8, this.toWorldZ(source.y + source.h / 2));
       mesh.rotation.y = game.time * 2;
+      if (mesh.userData?.halo) {
+        mesh.userData.halo.material.opacity = 0.16 + pulse * 0.22;
+        mesh.userData.halo.scale.setScalar(0.95 + pulse * 0.2);
+      }
+      if (mesh.userData?.core?.material) {
+        mesh.userData.core.material.emissiveIntensity = 0.18 + pulse * 0.2;
+      }
     });
 
     this.dynamic.fragments.forEach(({ source, mesh }) => {
       mesh.visible = !source.collected;
       mesh.position.set(this.toWorldX(source.x), 0.95 + Math.sin(game.time * 4 + source.x) * 0.12, this.toWorldZ(source.y));
       mesh.rotation.y = game.time * 1.5;
+      if (mesh.userData?.halo) {
+        mesh.userData.halo.material.opacity = 0.14 + pulse * 0.22;
+        mesh.userData.halo.scale.setScalar(0.9 + pulse * 0.25);
+      }
+      if (mesh.userData?.shard?.material) {
+        mesh.userData.shard.material.emissiveIntensity = 0.3 + pulse * 0.24;
+      }
     });
 
     this.dynamic.npcs.forEach(({ source, model }) => {
@@ -506,6 +639,10 @@ export class ObsoleteRenderer {
     if (exit) {
       this.dynamic.exitArch.visible = !exit.requires || game.progress[exit.requires];
       this.positionBox(this.dynamic.exitArch, exit, 1.8);
+      if (this.dynamic.exitArch.userData?.beacon) {
+        this.dynamic.exitArch.userData.beacon.material.opacity = 0.18 + pulse * 0.2;
+        this.dynamic.exitArch.userData.beacon.scale.setScalar(0.95 + pulse * 0.16);
+      }
     } else {
       this.dynamic.exitArch.visible = false;
     }
@@ -517,7 +654,8 @@ export class ObsoleteRenderer {
       this.toWorldZ(game.activeCheckpoint.y)
     );
     this.dynamic.checkpoint.rotation.y = game.time;
-    this.dynamic.checkpoint.material.opacity = 0.28 + Math.sin(game.time * 4) * 0.08;
+    this.dynamic.checkpoint.material.opacity = 0.34 + Math.sin(game.time * 4) * 0.12;
+    this.dynamic.checkpoint.scale.setScalar(1 + pulse * 0.18);
 
     this.renderer.domElement.style.filter = `saturate(${game.mode === "boot" ? 1.15 : 1}) brightness(${1 + game.flash * 0.18})`;
     this.mount.style.transform = game.glitch > 0 ? `translateX(${Math.sin(game.time * 60) * game.glitch * 2}px)` : "";
@@ -618,6 +756,8 @@ export class ObsoleteRenderer {
         new THREE.SphereGeometry(0.14, 8, 8),
         new THREE.MeshBasicMaterial({ color: "#ffd37d" })
       );
+      light.userData.effectType = "spark";
+      light.userData.phase = (decor.x + decor.y) * 0.01;
       return this.placeFreeform(light, { ...decor, w: 10, h: 10 }, 1.6);
     }
 
@@ -692,14 +832,27 @@ export class ObsoleteRenderer {
         color: "#ff7c55",
         roughness: 0.65,
         metalness: 0.15,
+        emissive: "#6a2014",
+        emissiveIntensity: 0.18,
       })
     );
+    const warning = new THREE.Mesh(
+      new THREE.PlaneGeometry(rect.w / WORLD_SCALE * 0.92, 0.22),
+      new THREE.MeshBasicMaterial({
+        color: "#ffd37d",
+        transparent: true,
+        opacity: 0.22,
+      })
+    );
+    warning.position.set(0, 0.5, rect.h / WORLD_SCALE / 2 + 0.02);
     const piston = new THREE.Mesh(
       new THREE.BoxGeometry(0.22, 4.5, 0.22),
       new THREE.MeshStandardMaterial({ color: "#8f959b", roughness: 0.6, metalness: 0.5 })
     );
     piston.position.y = 1.2;
-    group.add(arm, piston);
+    group.add(arm, warning, piston);
+    group.userData.arm = arm;
+    group.userData.warning = warning;
     this.positionBox(group, rect, 1.1);
     return group;
   }
@@ -711,15 +864,29 @@ export class ObsoleteRenderer {
         color: "#ef7c59",
         roughness: 0.8,
         metalness: 0.1,
+        emissive: "#4e1915",
+        emissiveIntensity: 0.16,
       })
     );
+    const beacon = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.max(0.45, rect.w / WORLD_SCALE * 0.9), 0.22),
+      new THREE.MeshBasicMaterial({
+        color: "#ffd37d",
+        transparent: true,
+        opacity: 0.2,
+      })
+    );
+    beacon.position.set(0, 1.45, rect.h / WORLD_SCALE / 2 + 0.03);
+    mesh.add(beacon);
+    mesh.userData.beacon = beacon;
     this.positionBox(mesh, rect, 1.2);
     return mesh;
   }
 
   createPickup(kind) {
     const colorValue = kind === "pickup" ? "#7e92ff" : "#8effd3";
-    return new THREE.Mesh(
+    const group = new THREE.Group();
+    const core = new THREE.Mesh(
       new THREE.BoxGeometry(0.45, 0.14, 0.35),
       new THREE.MeshStandardMaterial({
         color: colorValue,
@@ -729,10 +896,26 @@ export class ObsoleteRenderer {
         emissiveIntensity: 0.18,
       })
     );
+    const halo = new THREE.Mesh(
+      new THREE.RingGeometry(0.24, 0.42, 28),
+      new THREE.MeshBasicMaterial({
+        color: colorValue,
+        transparent: true,
+        opacity: 0.2,
+        side: THREE.DoubleSide,
+      })
+    );
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.y = -0.02;
+    group.add(core, halo);
+    group.userData.core = core;
+    group.userData.halo = halo;
+    return group;
   }
 
   createFragment() {
-    return new THREE.Mesh(
+    const group = new THREE.Group();
+    const shard = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.24, 0),
       new THREE.MeshStandardMaterial({
         color: "#ffd48a",
@@ -742,28 +925,49 @@ export class ObsoleteRenderer {
         emissiveIntensity: 0.35,
       })
     );
+    const halo = new THREE.Mesh(
+      new THREE.RingGeometry(0.2, 0.38, 26),
+      new THREE.MeshBasicMaterial({
+        color: "#ffd48a",
+        transparent: true,
+        opacity: 0.18,
+        side: THREE.DoubleSide,
+      })
+    );
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.y = -0.03;
+    group.add(shard, halo);
+    group.userData.shard = shard;
+    group.userData.halo = halo;
+    return group;
   }
 
   createBattery() {
-    return new THREE.Mesh(
+    const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.8, 0.28, 0.6),
       new THREE.MeshStandardMaterial({
         color: "#ff8c62",
         roughness: 0.62,
         metalness: 0.2,
+        emissive: "#7a2a12",
+        emissiveIntensity: 0.18,
       })
     );
+    return mesh;
   }
 
   createSocket() {
-    return new THREE.Mesh(
+    const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1.1, 0.22, 1.1),
       new THREE.MeshStandardMaterial({
         color: "#203138",
         roughness: 0.88,
         metalness: 0.18,
+        emissive: "#0f1518",
+        emissiveIntensity: 0.08,
       })
     );
+    return mesh;
   }
 
   createConsole(label) {
@@ -777,13 +981,30 @@ export class ObsoleteRenderer {
       new THREE.MeshBasicMaterial({ color: "#9afce3" })
     );
     screen.position.set(0, 0.15, 0.57);
+    const screenGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.92, 0.42),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.12,
+      })
+    );
+    screenGlow.position.set(0, 0.15, 0.55);
     const glyph = new THREE.Mesh(
       new THREE.PlaneGeometry(0.4, 0.1),
       new THREE.MeshBasicMaterial({ color: "#0e1618" })
     );
     glyph.position.set(0, -0.1, 0.57);
-    group.add(body, screen, glyph);
+    const led = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 10, 10),
+      new THREE.MeshBasicMaterial({ color: "#ffd37d" })
+    );
+    led.position.set(0.43, 0.26, 0.45);
+    group.add(body, screenGlow, screen, glyph, led);
     group.userData.label = label;
+    group.userData.screen = screen;
+    group.userData.screenGlow = screenGlow;
+    group.userData.led = led;
     return group;
   }
 
@@ -797,15 +1018,27 @@ export class ObsoleteRenderer {
     const left = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.1, 0.24), material);
     const right = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.1, 0.24), material);
     const top = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.24, 0.24), material);
+    const beacon = new THREE.Mesh(
+      new THREE.RingGeometry(0.78, 1.08, 28),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+      })
+    );
     left.position.x = -0.45;
     right.position.x = 0.45;
     top.position.y = 0.95;
-    group.add(left, right, top);
+    beacon.rotation.x = -Math.PI / 2;
+    beacon.position.set(0, 0.06, 0);
+    group.add(left, right, top, beacon);
+    group.userData.beacon = beacon;
     return group;
   }
 
   createCheckpointBeacon() {
-    return new THREE.Mesh(
+    const beacon = new THREE.Mesh(
       new THREE.RingGeometry(0.25, 0.48, 24),
       new THREE.MeshBasicMaterial({
         color: "#ffd37d",
@@ -814,6 +1047,8 @@ export class ObsoleteRenderer {
         side: THREE.DoubleSide,
       })
     );
+    beacon.userData.baseOpacity = 0.35;
+    return beacon;
   }
 
   createPlayerShadow() {
@@ -835,7 +1070,7 @@ export class ObsoleteRenderer {
       new THREE.MeshBasicMaterial({
         color: "#8effd3",
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.36,
         side: THREE.DoubleSide,
       })
     );
