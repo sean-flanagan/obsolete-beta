@@ -14,6 +14,7 @@ const ui = {
   bootScreen: document.getElementById("bootScreen"),
   bootLines: document.getElementById("bootLines"),
   banner: document.getElementById("banner"),
+  objectivePanel: document.getElementById("objectivePanel"),
   objectiveTitle: document.getElementById("objectiveTitle"),
   objectiveBody: document.getElementById("objectiveBody"),
   interactionPrompt: document.getElementById("interactionPrompt"),

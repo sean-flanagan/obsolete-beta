@@ -265,6 +265,29 @@ body {
   transform: translate(-50%, -50%);
 }
 
+.overlay--title {
+  left: 37%;
+  top: 69%;
+  width: min(430px, calc(100% - 64px));
+  padding: 22px 24px;
+  text-align: left;
+  background: rgba(9, 14, 18, 0.68);
+  border-color: rgba(255, 220, 170, 0.18);
+  transform: translate(-50%, -50%);
+}
+
+.overlay--title h2 {
+  margin-bottom: 10px;
+}
+
+.overlay--title .overlay__hint {
+  font-size: 0.92rem;
+}
+
+.overlay--title .game-button {
+  box-shadow: 0 0 24px rgba(255, 186, 98, 0.28);
+}
+
 .overlay--boot {
   left: 50%;
   top: 50%;

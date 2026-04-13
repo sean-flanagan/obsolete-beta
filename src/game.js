@@ -1018,6 +1018,7 @@ export class ObsoleteGame {
     this.ui.interactionPrompt.textContent = prompt;
     this.ui.interactionPrompt.classList.toggle("is-hidden", !prompt);
 
+    this.ui.objectivePanel.classList.toggle("is-hidden", this.mode === "title");
     this.ui.titleScreen.classList.toggle("is-hidden", this.mode !== "title");
     this.ui.bootScreen.classList.toggle("is-hidden", this.mode !== "boot");
     this.ui.winScreen.classList.toggle("is-hidden", this.mode !== "win");

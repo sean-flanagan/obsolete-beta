@@ -27,6 +27,8 @@ export class ObsoleteRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = false;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
     this.mount.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.OrthographicCamera(-14, 14, 8, -8, 0.1, 200);
@@ -67,12 +69,16 @@ export class ObsoleteRenderer {
   }
 
   setupLights() {
-    this.ambientLight = new THREE.HemisphereLight("#ffcf9a", "#1b2730", 1.25);
-    this.sunLight = new THREE.DirectionalLight("#ffd89a", 1.1);
-    this.sunLight.position.set(12, 22, 8);
-    this.rimLight = new THREE.DirectionalLight("#7cffdf", 0.75);
+    this.ambientLight = new THREE.HemisphereLight("#ffcf9a", "#1b2730", 1.05);
+    this.sunLight = new THREE.DirectionalLight("#ffd89a", 1.55);
+    this.sunLight.position.set(14, 24, 9);
+    this.fillLight = new THREE.DirectionalLight("#7db8ff", 0.45);
+    this.fillLight.position.set(-15, 11, 10);
+    this.rimLight = new THREE.DirectionalLight("#7cffdf", 1.05);
     this.rimLight.position.set(-10, 10, -14);
-    this.scene.add(this.ambientLight, this.sunLight, this.rimLight);
+    this.heroLight = new THREE.PointLight("#8effd3", 1.4, 14, 2);
+    this.heroLight.position.set(0, 2.2, 0);
+    this.scene.add(this.ambientLight, this.sunLight, this.fillLight, this.rimLight, this.heroLight);
   }
 
   setupAtmosphere() {
@@ -81,12 +87,35 @@ export class ObsoleteRenderer {
       new THREE.MeshBasicMaterial({
         color: "#ffb768",
         transparent: true,
-        opacity: 0.08,
+        opacity: 0.14,
       })
     );
     this.floorGlow.rotation.x = -Math.PI / 2;
     this.floorGlow.position.set(0, 0.02, 0);
     this.fxRoot.add(this.floorGlow);
+
+    this.heroLightGlow = new THREE.Mesh(
+      new THREE.CircleGeometry(2.8, 40),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.08,
+      })
+    );
+    this.heroLightGlow.rotation.x = -Math.PI / 2;
+    this.heroLightGlow.position.set(0, 0.03, 0);
+    this.fxRoot.add(this.heroLightGlow);
+
+    this.sunHalo = new THREE.Mesh(
+      new THREE.CircleGeometry(10, 48),
+      new THREE.MeshBasicMaterial({
+        color: "#ffd493",
+        transparent: true,
+        opacity: 0.08,
+      })
+    );
+    this.sunHalo.position.set(0, 9, -24);
+    this.fxRoot.add(this.sunHalo);
   }
 
   setupDynamicObjects() {
@@ -321,35 +350,62 @@ export class ObsoleteRenderer {
 
   updateCamera(game) {
     const palette = game.mode === "ending" || game.mode === "win" ? PALETTES.dawn : PALETTES.yard;
-    const targetX = this.toWorldX(game.camera.x + VIEW_WIDTH / 2);
-    const targetZ = this.toWorldZ(game.camera.y + VIEW_HEIGHT / 2);
-    const y = game.mode === "ending" || game.mode === "win" ? 17 : 18;
-    this.camera.position.set(targetX - 4, y, targetZ + 13);
-    this.camera.lookAt(targetX, 0, targetZ);
+    const playerX = this.toWorldX(game.player.x + game.player.w / 2);
+    const playerZ = this.toWorldZ(game.player.y + game.player.h / 2);
+    const titleMode = game.mode === "title";
+    const targetX = titleMode ? playerX + 3.4 : this.toWorldX(game.camera.x + VIEW_WIDTH / 2);
+    const targetZ = titleMode ? playerZ - 0.6 : this.toWorldZ(game.camera.y + VIEW_HEIGHT / 2);
+    const y = game.mode === "ending" || game.mode === "win" ? 17 : titleMode ? 15.6 : 18;
+    const cameraOffsetX = titleMode ? -6.2 : -4;
+    const cameraOffsetZ = titleMode ? 11.4 : 13;
+    this.camera.position.set(targetX + cameraOffsetX, y, targetZ + cameraOffsetZ);
+    this.camera.lookAt(targetX, titleMode ? 0.75 : 0, targetZ);
     this.floorGlow.material.color.set(palette.lamp);
-    this.floorGlow.position.set(targetX, 0.02, targetZ);
+    this.floorGlow.position.set(titleMode ? playerX + 0.25 : targetX, 0.02, titleMode ? playerZ : targetZ);
+    this.sunHalo.material.color.set(palette.lamp);
+    this.sunHalo.position.set(targetX + (titleMode ? 9.4 : 11), game.mode === "ending" || game.mode === "win" ? 10.5 : titleMode ? 8.2 : 8.8, targetZ - (titleMode ? 18.5 : 21));
   }
 
   updateDynamicObjects(game) {
     const pulse = 0.5 + (Math.sin(game.time * 4.4) + 1) * 0.5;
+    const playerX = this.toWorldX(game.player.x + game.player.w / 2);
+    const playerZ = this.toWorldZ(game.player.y + game.player.h / 2);
+    const titleMode = game.mode === "title";
+    this.heroLight.position.set(playerX + (titleMode ? 0.15 : 0.3), game.mode === "ending" || game.mode === "win" ? 2.6 : titleMode ? 2.75 : 2.2, playerZ + (titleMode ? -0.05 : 0.15));
+    this.heroLightGlow.position.set(playerX + (titleMode ? 0.05 : 0.15), 0.03, playerZ + (titleMode ? -0.04 : 0.05));
+    this.heroLight.intensity =
+      game.mode === "boot"
+        ? 1.75 + pulse * 0.35
+        : titleMode
+          ? 2.1 + pulse * 0.42
+          : game.mode === "ending" || game.mode === "win"
+            ? 1.15 + pulse * 0.18
+            : 1.35 + pulse * 0.22;
+    this.heroLight.distance = game.mode === "ending" || game.mode === "win" ? 12 : titleMode ? 16 : 14;
+    this.heroLightGlow.material.opacity =
+      game.mode === "boot"
+        ? 0.16 + pulse * 0.06
+        : titleMode
+          ? 0.2 + pulse * 0.07
+          : game.mode === "ending" || game.mode === "win"
+            ? 0.1 + pulse * 0.03
+            : 0.12 + pulse * 0.04;
     if (game.mode === "ending" || game.mode === "win") {
       this.updateLaptop(this.dynamic.player, game.player, game.player.mood, true);
-      this.dynamic.playerShadow.position.set(
-        this.toWorldX(game.player.x + game.player.w / 2),
-        0.04,
-        this.toWorldZ(game.player.y + game.player.h / 2)
-      );
+      this.dynamic.player.group.scale.setScalar(1.08);
+      this.dynamic.playerShadow.position.set(playerX, 0.04, playerZ);
+      this.dynamic.playerShadow.scale.set(1.15, 1, 1.15);
+      this.dynamic.playerShadow.material.opacity = 0.24 + pulse * 0.08;
       this.dynamic.interactionRing.visible = false;
       return;
     }
 
-    this.updateLaptop(this.dynamic.player, game.player, game.player.mood);
-    this.dynamic.playerShadow.position.set(
-      this.toWorldX(game.player.x + game.player.w / 2),
-      0.04,
-      this.toWorldZ(game.player.y + game.player.h / 2)
-    );
-    this.dynamic.playerShadow.material.opacity = 0.2 + pulse * 0.08;
+    this.updateLaptop(this.dynamic.player, game.player, titleMode ? "heroic" : game.player.mood);
+    this.dynamic.player.group.scale.setScalar(titleMode ? 1.6 : 1);
+    this.dynamic.player.group.position.y = titleMode ? 0.08 : 0;
+    this.dynamic.playerShadow.position.set(playerX + (titleMode ? -0.08 : 0), 0.04, playerZ + (titleMode ? -0.03 : 0));
+    this.dynamic.playerShadow.scale.set(titleMode ? 1.95 : 1.3, 1, titleMode ? 1.72 : 1.22);
+    this.dynamic.playerShadow.material.opacity = titleMode ? 0.34 + pulse * 0.1 : 0.26 + pulse * 0.08;
 
     if (game.interactionFocus) {
       const focus = game.interactionFocus;
@@ -471,10 +527,21 @@ export class ObsoleteRenderer {
     const palette = game.mode === "ending" || game.mode === "win" ? PALETTES.dawn : PALETTES.yard;
     this.scene.background = color(palette.skyTop);
     this.scene.fog.color.set(palette.skyBottom);
+    this.scene.fog.near = game.mode === "ending" || game.mode === "win" ? 20 : 14;
+    this.scene.fog.far = game.mode === "ending" || game.mode === "win" ? 72 : 54;
     this.ambientLight.color.set(palette.lamp);
     this.ambientLight.groundColor.set(game.mode === "ending" || game.mode === "win" ? "#38444c" : "#182226");
+    this.ambientLight.intensity = game.mode === "ending" || game.mode === "win" ? 1.2 : 1.05;
     this.sunLight.color.set(palette.lamp);
+    this.sunLight.intensity = game.mode === "ending" || game.mode === "win" ? 1.35 : 1.55;
+    this.fillLight.color.set(game.mode === "ending" || game.mode === "win" ? "#bfd7ff" : "#7db8ff");
+    this.fillLight.intensity = game.mode === "ending" || game.mode === "win" ? 0.3 : 0.45;
     this.rimLight.color.set(palette.accent);
+    this.rimLight.intensity = game.mode === "ending" || game.mode === "win" ? 0.75 : 1.05;
+    this.heroLight.color.set(palette.accent);
+    this.floorGlow.material.opacity = game.mode === "ending" || game.mode === "win" ? 0.16 : 0.18;
+    this.heroLightGlow.material.color.set(palette.accent);
+    this.sunHalo.material.opacity = game.mode === "ending" || game.mode === "win" ? 0.12 : 0.08;
   }
 
   clearGroup(group) {
@@ -753,9 +820,9 @@ export class ObsoleteRenderer {
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(0.68, 28),
       new THREE.MeshBasicMaterial({
-        color: "#8effd3",
+        color: "#10191d",
         transparent: true,
-        opacity: 0.24,
+        opacity: 0.3,
       })
     );
     shadow.rotation.x = -Math.PI / 2;
@@ -778,36 +845,112 @@ export class ObsoleteRenderer {
 
   createLaptop(kind) {
     const group = new THREE.Group();
-    const shellColor = kind === "player" ? "#c7d2d8" : "#7a8792";
-    const screenColor = kind === "player" ? "#b7fff1" : "#c6ffe7";
+    const isPlayer = kind === "player";
+    const shellColor = isPlayer ? "#c8d1cb" : "#7a8792";
+    const shellAccent = isPlayer ? "#e7d9b1" : "#8d98a1";
+    const lidColor = isPlayer ? "#60737d" : "#505d67";
+    const screenColor = isPlayer ? "#b9fff0" : "#c6ffe7";
 
     const base = new THREE.Mesh(
-      new THREE.BoxGeometry(1.1, 0.25, 0.78),
+      new THREE.BoxGeometry(1.18, 0.26, 0.82),
       new THREE.MeshStandardMaterial({
         color: shellColor,
-        roughness: 0.58,
-        metalness: 0.2,
-        emissive: kind === "player" ? "#182226" : "#0b0f11",
-        emissiveIntensity: kind === "player" ? 0.18 : 0.05,
+        roughness: 0.5,
+        metalness: 0.18,
+        emissive: isPlayer ? "#182226" : "#0b0f11",
+        emissiveIntensity: isPlayer ? 0.2 : 0.05,
       })
     );
     base.position.y = 0.18;
-    const lid = new THREE.Mesh(
-      new THREE.BoxGeometry(0.88, 0.62, 0.12),
+
+    const keyboardPlate = new THREE.Mesh(
+      new THREE.BoxGeometry(1.02, 0.035, 0.58),
       new THREE.MeshStandardMaterial({
-        color: kind === "player" ? "#5f6e78" : "#505d67",
-        roughness: 0.68,
-        metalness: 0.14,
+        color: isPlayer ? "#9ca7ac" : "#7f8a93",
+        roughness: 0.86,
+        metalness: 0.08,
       })
     );
-    lid.position.set(0, 0.56, -0.22);
-    lid.rotation.x = -0.85;
+    keyboardPlate.position.set(0, 0.33, 0.02);
+
+    const lid = new THREE.Mesh(
+      new THREE.BoxGeometry(0.94, 0.7, 0.12),
+      new THREE.MeshStandardMaterial({
+        color: lidColor,
+        roughness: 0.58,
+        metalness: 0.16,
+      })
+    );
+    lid.position.set(0.02, 0.6, -0.25);
+    lid.rotation.x = -0.92;
+    lid.rotation.z = isPlayer ? 0.045 : 0;
+
+    const screenBezel = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.74, 0.44),
+      new THREE.MeshStandardMaterial({
+        color: isPlayer ? "#172227" : "#192126",
+        roughness: 0.9,
+        metalness: 0.04,
+      })
+    );
+    screenBezel.position.set(0.02, 0.61, -0.182);
+    screenBezel.rotation.x = -0.92;
+    screenBezel.rotation.z = lid.rotation.z;
+
     const screen = new THREE.Mesh(
       new THREE.PlaneGeometry(0.62, 0.34),
       new THREE.MeshBasicMaterial({ color: screenColor })
     );
-    screen.position.set(0, 0.6, -0.14);
-    screen.rotation.x = -0.85;
+    screen.position.set(0.02, 0.61, -0.172);
+    screen.rotation.x = -0.92;
+    screen.rotation.z = lid.rotation.z;
+
+    const screenGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.7, 0.4),
+      new THREE.MeshBasicMaterial({
+        color: isPlayer ? "#8effd3" : "#d5ffe8",
+        transparent: true,
+        opacity: isPlayer ? 0.14 : 0.07,
+      })
+    );
+    screenGlow.position.set(0.02, 0.61, -0.19);
+    screenGlow.rotation.x = -0.92;
+    screenGlow.rotation.z = lid.rotation.z;
+
+    const hingeLeft = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.12, 0.12),
+      new THREE.MeshStandardMaterial({ color: lidColor, roughness: 0.65, metalness: 0.18 })
+    );
+    const hingeRight = hingeLeft.clone();
+    hingeLeft.position.set(-0.28, 0.31, -0.27);
+    hingeRight.position.set(0.28, 0.31, -0.27);
+
+    const powerLed = new THREE.Mesh(
+      new THREE.SphereGeometry(0.035, 12, 12),
+      new THREE.MeshBasicMaterial({
+        color: isPlayer ? "#8effd3" : "#ffd37d",
+      })
+    );
+    powerLed.position.set(0.44, 0.29, 0.34);
+
+    const badge = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.2, 0.09),
+      new THREE.MeshBasicMaterial({ color: shellAccent })
+    );
+    badge.position.set(-0.33, 0.315, 0.29);
+    badge.rotation.x = -Math.PI / 2;
+    badge.rotation.z = isPlayer ? -0.18 : 0;
+
+    const chippedCorner = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.04, 0.12),
+      new THREE.MeshStandardMaterial({
+        color: isPlayer ? "#88949a" : "#6f7a82",
+        roughness: 0.78,
+        metalness: 0.1,
+      })
+    );
+    chippedCorner.position.set(0.47, 0.315, -0.27);
+    chippedCorner.rotation.z = 0.48;
 
     const leftEye = new THREE.Mesh(
       new THREE.PlaneGeometry(0.08, 0.08),
@@ -818,26 +961,68 @@ export class ObsoleteRenderer {
       new THREE.PlaneGeometry(0.18, 0.03),
       new THREE.MeshBasicMaterial({ color: "#122628" })
     );
-    leftEye.position.set(-0.12, 0.61, -0.135);
-    rightEye.position.set(0.12, 0.61, -0.135);
-    mouth.position.set(0, 0.53, -0.13);
-    leftEye.rotation.x = rightEye.rotation.x = mouth.rotation.x = -0.85;
+    leftEye.position.set(-0.1, 0.615, -0.165);
+    rightEye.position.set(0.14, 0.615, -0.165);
+    mouth.position.set(0.02, 0.535, -0.16);
+    leftEye.rotation.x = rightEye.rotation.x = mouth.rotation.x = -0.92;
+    leftEye.rotation.z = rightEye.rotation.z = mouth.rotation.z = lid.rotation.z;
 
     const antennaGlow = new THREE.Mesh(
-      new THREE.RingGeometry(0.18, 0.28, 24),
+      new THREE.RingGeometry(0.18, 0.3, 24),
       new THREE.MeshBasicMaterial({
-        color: kind === "player" ? "#8effd3" : "#ffd37d",
+        color: isPlayer ? "#8effd3" : "#ffd37d",
         transparent: true,
-        opacity: kind === "player" ? 0.28 : 0.14,
+        opacity: isPlayer ? 0.32 : 0.14,
         side: THREE.DoubleSide,
       })
     );
     antennaGlow.rotation.x = -Math.PI / 2;
     antennaGlow.position.set(0, 0.04, 0.02);
 
-    group.add(base, lid, screen, leftEye, rightEye, mouth, antennaGlow);
-    group.userData = { leftEye, rightEye, mouth, base, lid, screen, antennaGlow };
-    return { group, leftEye, rightEye, mouth, base, lid, screen, antennaGlow };
+    group.add(
+      base,
+      keyboardPlate,
+      lid,
+      screenBezel,
+      screen,
+      screenGlow,
+      hingeLeft,
+      hingeRight,
+      powerLed,
+      badge,
+      chippedCorner,
+      leftEye,
+      rightEye,
+      mouth,
+      antennaGlow
+    );
+    group.userData = {
+      leftEye,
+      rightEye,
+      mouth,
+      base,
+      lid,
+      screen,
+      screenGlow,
+      antennaGlow,
+      powerLed,
+      badge,
+      chippedCorner,
+    };
+    return {
+      group,
+      leftEye,
+      rightEye,
+      mouth,
+      base,
+      lid,
+      screen,
+      screenGlow,
+      antennaGlow,
+      powerLed,
+      badge,
+      chippedCorner,
+    };
   }
 
   createNpc(npc) {
@@ -920,28 +1105,50 @@ export class ObsoleteRenderer {
   updateLaptop(model, source, mood, noTilt = false) {
     const x = this.toWorldX(source.x + source.w / 2);
     const z = this.toWorldZ(source.y + source.h / 2);
+    const heroic = mood === "heroic";
+    const determined = mood === "determined";
     model.group.position.set(x, 0, z);
     model.group.rotation.y = noTilt ? 0 : source.facing === -1 ? Math.PI * 0.08 : -Math.PI * 0.08;
+    model.group.rotation.z = noTilt ? 0 : heroic ? 0.03 : determined ? 0.015 : 0;
 
     if (model.screen) {
-      model.screen.material.color.set(mood === "heroic" ? "#dffef4" : mood === "determined" ? "#b8fff1" : "#9afce3");
+      model.screen.material.color.set(heroic ? "#e4fff6" : determined ? "#c8fff1" : "#a8ffea");
+    }
+    if (model.screenGlow?.material) {
+      model.screenGlow.material.opacity = heroic ? 0.24 : determined ? 0.19 : 0.13;
+      model.screenGlow.material.color.set(heroic ? "#b8fff0" : "#8effd3");
     }
     if (model.base?.material) {
-      model.base.material.emissiveIntensity = mood === "heroic" ? 0.28 : mood === "determined" ? 0.22 : 0.16;
+      model.base.material.emissiveIntensity = heroic ? 0.34 : determined ? 0.28 : 0.2;
+      model.base.material.color.set(heroic ? "#d3dbd5" : determined ? "#c8d1cb" : "#bcc5c8");
+    }
+    if (model.lid?.material) {
+      model.lid.material.color.set(heroic ? "#738892" : determined ? "#657a83" : "#5d7079");
     }
     if (model.antennaGlow?.material) {
-      model.antennaGlow.material.opacity = mood === "heroic" ? 0.46 : mood === "determined" ? 0.36 : 0.24;
+      model.antennaGlow.material.opacity = heroic ? 0.52 : determined ? 0.42 : 0.28;
+      model.antennaGlow.scale.setScalar(heroic ? 1.14 : determined ? 1.08 : 1);
+    }
+    if (model.powerLed?.material) {
+      model.powerLed.material.color.set(heroic ? "#d8fff3" : determined ? "#8effd3" : "#7de8ca");
+      model.powerLed.scale.setScalar(heroic ? 1.3 : determined ? 1.15 : 1);
+    }
+    if (model.badge) {
+      model.badge.visible = true;
+    }
+    if (model.chippedCorner) {
+      model.chippedCorner.rotation.y = heroic ? 0.2 : 0;
     }
 
     if (!model.leftEye) {
       return;
     }
 
-    const eyeScaleY = mood === "determined" || mood === "heroic" ? 0.45 : 1;
+    const eyeScaleY = determined || heroic ? 0.45 : 1;
     model.leftEye.scale.y = eyeScaleY;
     model.rightEye.scale.y = eyeScaleY;
-    model.mouth.scale.x = mood === "heroic" ? 1.4 : mood === "determined" ? 1.2 : 1;
-    model.mouth.position.y = mood === "curious" ? 0.53 : 0.5;
+    model.mouth.scale.x = heroic ? 1.4 : determined ? 1.2 : 1;
+    model.mouth.position.y = mood === "curious" ? 0.535 : 0.5;
   }
 
   positionBox(object, rect, height = 0.3) {
