@@ -271,7 +271,9 @@ body {
   width: min(430px, calc(100% - 64px));
   padding: 22px 24px;
   text-align: left;
-  background: rgba(9, 14, 18, 0.68);
+  background:
+    linear-gradient(180deg, rgba(255, 230, 176, 0.08), transparent 34%),
+    rgba(9, 14, 18, 0.72);
   border-color: rgba(255, 220, 170, 0.18);
   transform: translate(-50%, -50%);
 }
@@ -282,6 +284,15 @@ body {
 
 .overlay--title .overlay__hint {
   font-size: 0.92rem;
+}
+
+.overlay__loop-line {
+  margin-top: 12px !important;
+  color: #ffe5ad;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  text-transform: uppercase;
 }
 
 .overlay--title .game-button {
@@ -338,6 +349,12 @@ body {
   color: #0b1415;
   background: linear-gradient(180deg, #ffe0a8, #ffb963);
   cursor: pointer;
+}
+
+.game-button--primary {
+  box-shadow:
+    0 0 24px rgba(255, 186, 98, 0.28),
+    0 0 54px rgba(255, 186, 98, 0.14);
 }
 
 .game-button:hover {
@@ -403,6 +420,28 @@ body {
   color: var(--teal);
   font-size: 0.92rem;
   line-height: 1.45;
+}
+
+.dialogue-panel__prompt[data-tone="talk"] {
+  color: var(--teal);
+}
+
+.dialogue-panel__prompt[data-tone="guide"] {
+  color: #9adfff;
+}
+
+.dialogue-panel__prompt[data-tone="power"] {
+  color: #b9ffe5;
+  text-shadow: 0 0 14px rgba(99, 255, 209, 0.2);
+}
+
+.dialogue-panel__prompt[data-tone="warning"] {
+  color: #ffb08f;
+}
+
+.dialogue-panel__prompt[data-tone="exit"] {
+  color: #ffe59a;
+  text-shadow: 0 0 16px rgba(255, 229, 154, 0.2);
 }
 
 .cabinet__status {

@@ -1,10 +1,12 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PALETTES } from "./levels.js";
+import { getInteractionCueStyle } from "./interaction-cue-style.js";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 540;
 const WORLD_SCALE = 34;
+const ATMOSPHERE_PARTICLE_COUNT = 52;
 
 const color = (value) => new THREE.Color(value);
 
@@ -82,6 +84,8 @@ export class ObsoleteRenderer {
   }
 
   setupAtmosphere() {
+    this.atmosphereSpriteTexture = this.createSoftParticleTexture();
+
     this.floorGlow = new THREE.Mesh(
       new THREE.CircleGeometry(6, 40),
       new THREE.MeshBasicMaterial({
@@ -161,6 +165,52 @@ export class ObsoleteRenderer {
       this.atmosphereSparks.push(spark);
     }
     this.fxRoot.add(this.sparkField);
+
+    this.atmosphereBillboards = new THREE.Group();
+    this.billboardMotes = [];
+    for (let i = 0; i < ATMOSPHERE_PARTICLE_COUNT; i += 1) {
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: this.atmosphereSpriteTexture,
+          color: i % 5 === 0 ? "#ffd8a4" : i % 2 === 0 ? "#8effd3" : "#c4fff0",
+          transparent: true,
+          opacity: 0.12,
+          depthWrite: false,
+        })
+      );
+      sprite.userData = {
+        layer: i % 3,
+        baseX: (i % 9) * 1.7 - 6.8,
+        baseY: 0.7 + (i % 6) * 0.55,
+        baseZ: -Math.floor(i / 9) * 1.9 + 2.4,
+        phase: i * 0.63,
+        drift: 0.18 + (i % 4) * 0.05,
+        sway: 0.18 + (i % 5) * 0.05,
+        scale: 0.3 + (i % 4) * 0.08,
+      };
+      sprite.scale.setScalar(sprite.userData.scale);
+      this.atmosphereBillboards.add(sprite);
+      this.billboardMotes.push(sprite);
+    }
+    this.fxRoot.add(this.atmosphereBillboards);
+  }
+
+  createSoftParticleTexture() {
+    const size = 64;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    const gradient = ctx.createRadialGradient(size / 2, size / 2, 3, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.32, "rgba(255,255,255,0.88)");
+    gradient.addColorStop(0.72, "rgba(255,255,255,0.2)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
   }
 
   setupDynamicObjects() {
@@ -398,13 +448,16 @@ export class ObsoleteRenderer {
     const playerX = this.toWorldX(game.player.x + game.player.w / 2);
     const playerZ = this.toWorldZ(game.player.y + game.player.h / 2);
     const titleMode = game.mode === "title";
+    const bootMode = game.mode === "boot";
     const targetX = titleMode ? playerX + 3.4 : this.toWorldX(game.camera.x + VIEW_WIDTH / 2);
     const targetZ = titleMode ? playerZ - 0.6 : this.toWorldZ(game.camera.y + VIEW_HEIGHT / 2);
-    const y = game.mode === "ending" || game.mode === "win" ? 17 : titleMode ? 15.6 : 18;
-    const cameraOffsetX = titleMode ? -6.2 : -4;
-    const cameraOffsetZ = titleMode ? 11.4 : 13;
-    this.camera.position.set(targetX + cameraOffsetX, y, targetZ + cameraOffsetZ);
-    this.camera.lookAt(targetX, titleMode ? 0.75 : 0, targetZ);
+    const y = game.mode === "ending" || game.mode === "win" ? 17 : titleMode ? 15.6 : bootMode ? 16.2 : 18;
+    const cameraOffsetX = titleMode ? -6.2 : bootMode ? -5.1 : -4;
+    const cameraOffsetZ = titleMode ? 11.4 : bootMode ? 11.9 : 13;
+    const bootSwayX = bootMode ? Math.sin(game.time * 8.5) * (0.12 + game.powerSurge * 0.18) : 0;
+    const bootSwayZ = bootMode ? Math.cos(game.time * 6.2) * 0.16 : 0;
+    this.camera.position.set(targetX + cameraOffsetX + bootSwayX, y, targetZ + cameraOffsetZ + bootSwayZ);
+    this.camera.lookAt(targetX, titleMode ? 0.75 : bootMode ? 0.42 : 0, targetZ);
     this.floorGlow.material.color.set(palette.lamp);
     this.floorGlow.position.set(titleMode ? playerX + 0.25 : targetX, 0.02, titleMode ? playerZ : targetZ);
     this.sunHalo.material.color.set(palette.lamp);
@@ -416,32 +469,33 @@ export class ObsoleteRenderer {
     const playerX = this.toWorldX(game.player.x + game.player.w / 2);
     const playerZ = this.toWorldZ(game.player.y + game.player.h / 2);
     const titleMode = game.mode === "title";
+    const bootMode = game.mode === "boot";
     this.heroLight.position.set(playerX + (titleMode ? 0.15 : 0.3), game.mode === "ending" || game.mode === "win" ? 2.6 : titleMode ? 2.75 : 2.2, playerZ + (titleMode ? -0.05 : 0.15));
     this.heroLightGlow.position.set(playerX + (titleMode ? 0.05 : 0.15), 0.03, playerZ + (titleMode ? -0.04 : 0.05));
     this.heroLight.intensity =
-      game.mode === "boot"
-        ? 1.75 + pulse * 0.35
+      bootMode
+        ? 2.35 + pulse * 0.75
         : titleMode
           ? 2.1 + pulse * 0.42
           : game.mode === "ending" || game.mode === "win"
             ? 1.15 + pulse * 0.18
             : 1.35 + pulse * 0.22;
     this.heroLight.intensity += game.powerSurge * 0.55 + game.triumph * 0.22;
-    this.heroLight.distance = game.mode === "ending" || game.mode === "win" ? 12 : titleMode ? 16 : 14;
+    this.heroLight.distance = game.mode === "ending" || game.mode === "win" ? 12 : titleMode ? 16 : bootMode ? 18 : 14;
     this.heroLightGlow.material.opacity =
-      game.mode === "boot"
-        ? 0.16 + pulse * 0.06
+      bootMode
+        ? 0.22 + pulse * 0.12
         : titleMode
           ? 0.2 + pulse * 0.07
           : game.mode === "ending" || game.mode === "win"
             ? 0.1 + pulse * 0.03
             : 0.12 + pulse * 0.04;
     this.sunHalo.material.opacity =
-      (game.mode === "ending" || game.mode === "win" ? 0.12 : titleMode ? 0.13 : 0.08) +
-      pulse * (titleMode ? 0.035 : 0.015);
+      (game.mode === "ending" || game.mode === "win" ? 0.12 : titleMode ? 0.13 : bootMode ? 0.16 : 0.08) +
+      pulse * (titleMode ? 0.035 : bootMode ? 0.06 : 0.015);
     this.floorGlow.material.opacity =
-      (game.mode === "ending" || game.mode === "win" ? 0.16 : titleMode ? 0.22 : 0.18) +
-      Math.sin(game.time * 1.8) * 0.015;
+      (game.mode === "ending" || game.mode === "win" ? 0.16 : titleMode ? 0.22 : bootMode ? 0.3 : 0.18) +
+      Math.sin(game.time * 1.8) * (bootMode ? 0.05 : 0.015);
     this.dustField.position.set(playerX + (titleMode ? 0.8 : 0), 0, playerZ + (titleMode ? -0.3 : 0));
     this.dustMotes.forEach((mote, index) => {
       const { baseX, baseY, baseZ, drift, phase } = mote.userData;
@@ -463,6 +517,19 @@ export class ObsoleteRenderer {
       );
       spark.material.opacity = 0.05 + flicker * (titleMode ? 0.28 : 0.2);
       spark.scale.setScalar(0.8 + flicker * 0.9);
+    });
+    this.atmosphereBillboards.position.set(playerX + (titleMode ? 0.7 : 0), 0, playerZ + (titleMode ? -0.2 : 0));
+    this.billboardMotes.forEach((sprite, index) => {
+      const { layer, baseX, baseY, baseZ, phase, drift, sway, scale } = sprite.userData;
+      const layerBoost = titleMode ? 1.28 : game.mode === "ending" || game.mode === "win" ? 0.9 : 1;
+      const bob = Math.sin(game.time * (0.62 + drift) + phase) * (0.16 + layer * 0.04);
+      const swayX = Math.cos(game.time * (0.4 + sway) + phase) * (0.28 + layer * 0.06);
+      const swayZ = Math.sin(game.time * (0.28 + drift) + phase) * (0.18 + layer * 0.05);
+      sprite.position.set(baseX + swayX, baseY + bob, baseZ + swayZ);
+      sprite.material.opacity =
+        (titleMode ? 0.09 : game.mode === "ending" || game.mode === "win" ? 0.06 : 0.05) +
+        (Math.sin(game.time * (0.9 + drift) + index * 0.17) + 1) * (titleMode ? 0.055 : 0.035);
+      sprite.scale.setScalar((scale + pulse * 0.04 * (layer + 1)) * layerBoost);
     });
     if (this.dynamic.gateConsole.userData.screenGlow) {
       const consolePulse = 0.09 + Math.max(0, Math.sin(game.time * 3.4)) * 0.12;
@@ -519,8 +586,46 @@ export class ObsoleteRenderer {
       );
       const scaleX = Math.max(0.85, focus.w / WORLD_SCALE);
       const scaleZ = Math.max(0.85, focus.h / WORLD_SCALE);
+      const ring = this.dynamic.interactionRing.userData.ring;
+      const glow = this.dynamic.interactionRing.userData.glow;
+      const beacon = this.dynamic.interactionRing.userData.beacon;
+      const beaconCross = this.dynamic.interactionRing.userData.beaconCross;
+      const topHalo = this.dynamic.interactionRing.userData.topHalo;
+      const cap = this.dynamic.interactionRing.userData.cap;
+      const tone = focus.tone || "talk";
+      const highlightStyle = focus.highlightStyle || "ring";
+      const cueStyle = getInteractionCueStyle({ tone, highlightStyle, pulse });
+
       this.dynamic.interactionRing.scale.set(scaleX, 1, scaleZ);
-      this.dynamic.interactionRing.material.opacity = 0.28 + pulse * 0.2;
+      if (ring) {
+        ring.material.color.set(cueStyle.palette.ring);
+        ring.material.opacity = cueStyle.ringOpacity;
+      }
+      if (glow) {
+        glow.material.color.set(cueStyle.palette.ring);
+        glow.material.opacity = cueStyle.glowOpacity;
+        glow.scale.setScalar(cueStyle.glowScale);
+      }
+      if (beacon) {
+        beacon.material.color.set(cueStyle.palette.ring);
+        beacon.material.opacity = cueStyle.beaconOpacity;
+        beacon.scale.set(cueStyle.beaconScale.x, cueStyle.beaconScale.y, 1);
+      }
+      if (beaconCross) {
+        beaconCross.material.color.set(cueStyle.palette.ring);
+        beaconCross.material.opacity = cueStyle.beaconOpacity * 0.9;
+        beaconCross.scale.set(cueStyle.beaconScale.x, cueStyle.beaconScale.y, 1);
+      }
+      if (topHalo) {
+        topHalo.material.color.set(cueStyle.palette.accent);
+        topHalo.material.opacity = Math.min(1, cueStyle.capOpacity * 0.7);
+        topHalo.scale.setScalar(0.95 + cueStyle.capScale * 0.3);
+      }
+      if (cap) {
+        cap.material.color.set(cueStyle.palette.accent);
+        cap.material.opacity = cueStyle.capOpacity;
+        cap.scale.setScalar(cueStyle.capScale);
+      }
     } else {
       this.dynamic.interactionRing.visible = false;
     }
@@ -764,7 +869,65 @@ export class ObsoleteRenderer {
       return this.placeFreeform(light, { ...decor, w: 10, h: 10 }, 1.6);
     }
 
+    if (decor.type === "scatter_scrap") {
+      return this.createScatterCluster(decor);
+    }
+
     return null;
+  }
+
+  createScatterCluster(decor) {
+    const group = new THREE.Group();
+    const count = decor.count || 12;
+    const width = Math.max(0.6, (decor.w || 80) / WORLD_SCALE);
+    const depth = Math.max(0.6, (decor.h || 60) / WORLD_SCALE);
+    const colors = decor.colors || ["#58646d", "#445057", "#715c44", "#6e7378"];
+
+    for (let i = 0; i < count; i += 1) {
+      const variant = i % 3;
+      let piece;
+      if (variant === 0) {
+        piece = new THREE.Mesh(
+          new THREE.BoxGeometry(0.16 + (i % 4) * 0.05, 0.05 + (i % 3) * 0.02, 0.12 + (i % 5) * 0.03),
+          new THREE.MeshStandardMaterial({
+            color: colors[i % colors.length],
+            roughness: 0.95,
+            metalness: 0.08,
+          })
+        );
+      } else if (variant === 1) {
+        piece = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.03, 0.03, 0.16 + (i % 4) * 0.05, 8),
+          new THREE.MeshStandardMaterial({
+            color: colors[(i + 1) % colors.length],
+            roughness: 0.76,
+            metalness: 0.3,
+          })
+        );
+        piece.rotation.z = Math.PI / 2 + i * 0.3;
+      } else {
+        piece = new THREE.Mesh(
+          new THREE.BoxGeometry(0.1 + (i % 3) * 0.05, 0.02 + (i % 2) * 0.015, 0.18 + (i % 4) * 0.04),
+          new THREE.MeshStandardMaterial({
+            color: colors[(i + 2) % colors.length],
+            roughness: 0.88,
+            metalness: 0.16,
+          })
+        );
+        piece.rotation.x = (i % 2) * 0.3;
+      }
+
+      const t = i / Math.max(1, count - 1);
+      piece.position.set(
+        (t - 0.5) * width + Math.sin(i * 12.45) * width * 0.18,
+        0.02 + (i % 4) * 0.015,
+        Math.cos(i * 8.13) * depth * 0.32
+      );
+      piece.rotation.y += i * 0.61;
+      group.add(piece);
+    }
+
+    return this.placeFreeform(group, decor, decor.height ?? 0.08);
   }
 
   createStarterProp(decor) {
@@ -1068,17 +1231,76 @@ export class ObsoleteRenderer {
   }
 
   createInteractionRing() {
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.62, 0.9, 32),
+    const group = new THREE.Group();
+
+    const glow = new THREE.Mesh(
+      new THREE.CircleGeometry(1.28, 40),
       new THREE.MeshBasicMaterial({
         color: "#8effd3",
         transparent: true,
-        opacity: 0.36,
+        opacity: 0.14,
+        side: THREE.DoubleSide,
+      })
+    );
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = 0.018;
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.62, 0.98, 32),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.4,
         side: THREE.DoubleSide,
       })
     );
     ring.rotation.x = -Math.PI / 2;
-    return ring;
+    ring.position.y = 0.035;
+
+    const beacon = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.44, 2.05),
+      new THREE.MeshBasicMaterial({
+        color: "#8effd3",
+        transparent: true,
+        opacity: 0.3,
+        side: THREE.DoubleSide,
+      })
+    );
+    beacon.position.set(0, 1.28, 0);
+
+    const beaconCross = beacon.clone();
+    beaconCross.rotation.y = Math.PI / 2;
+
+    const topHalo = new THREE.Mesh(
+      new THREE.RingGeometry(0.18, 0.34, 24),
+      new THREE.MeshBasicMaterial({
+        color: "#dffef0",
+        transparent: true,
+        opacity: 0.4,
+        side: THREE.DoubleSide,
+      })
+    );
+    topHalo.position.set(0, 2.02, 0);
+    topHalo.rotation.x = -Math.PI / 2;
+
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 12, 12),
+      new THREE.MeshBasicMaterial({
+        color: "#ffd37d",
+        transparent: true,
+        opacity: 0.85,
+      })
+    );
+    cap.position.set(0, 2.18, 0);
+
+    group.add(glow, ring, beacon, beaconCross, topHalo, cap);
+    group.userData.glow = glow;
+    group.userData.ring = ring;
+    group.userData.beacon = beacon;
+    group.userData.beaconCross = beaconCross;
+    group.userData.topHalo = topHalo;
+    group.userData.cap = cap;
+    return group;
   }
 
   createLaptop(kind) {

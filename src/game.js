@@ -1,4 +1,5 @@
 import { ACTS, BOOT_LINES, CUTSCENES, MEMORY_FRAGMENTS } from "./levels.js";
+import { getObjectiveFocus } from "./objective-focus.js";
 
 const WIDTH = 960;
 const HEIGHT = 540;
@@ -180,54 +181,50 @@ export class ObsoleteGame {
       };
     }
 
-    if (this.actIndex === 0) {
-      if (!this.progress.act1TalkedToMachine) {
+    const hasBatteryGoal = this.act.socket && this.act.battery && !this.progress.batterySocketPowered;
+    if (hasBatteryGoal) {
+      if (!this.progress.act1TalkedToMachine && (this.act.npcs || []).length) {
         return {
           title: "Find a powered machine and talk to it.",
-          body: "Head toward the nearest glowing device and press E. Bitter CRT is closest on your right.",
-        };
-      }
-      if (!this.progress.batterySocketPowered) {
-        return {
-          title: "Push the orange battery into the glowing socket.",
-          body: "Walk into the battery to shove it, then line it up with the cyan socket to restore power.",
+          body: "Head toward the nearest glowing device and press E to get your bearings.",
         };
       }
       return {
-        title: "The gate is live — move through it.",
-        body: "Head right through the opened gate to reach the conveyor line.",
+        title: "Push the orange battery into the glowing socket.",
+        body: "Walk into the battery to shove it, then line it up with the cyan socket to restore power.",
       };
     }
 
-    if (this.actIndex === 1) {
-      if (!this.progress.hasFloppy) {
+    if (this.act.gateConsole && !this.progress.act2GateOpen) {
+      if (!this.progress.hasFloppy && (this.act.items || []).some((item) => item.id === "floppy")) {
         return {
           title: "Find the floppy disk.",
-          body: "Ride the conveyor, dodge the crushers, and grab the glowing disk before the gate console.",
-        };
-      }
-      if (!this.progress.act2GateOpen) {
-        return {
-          title: "Feed the floppy disk into the gate console.",
-          body: "Approach the console near the exit gate and press E to unlock the route.",
+          body: "Ride the conveyors, dodge the crushers, and grab the glowing disk before the gate console.",
         };
       }
       return {
-        title: "The route is open — get through the gate.",
-        body: "Move into the exit arch to reach the final chamber.",
+        title: "Feed the floppy disk into the gate console.",
+        body: "Approach the console near the exit gate and press E to unlock the route.",
       };
     }
 
-    if (!this.progress.diagnosticPassed) {
+    if (this.act.console && !this.progress.diagnosticPassed) {
       return {
         title: "Prove you still work.",
         body: "Reach the diagnostic console and pass all three memory-sequence rounds.",
       };
     }
 
+    if (this.act.exitZone) {
+      return {
+        title: this.act.title || "The route is open.",
+        body: this.act.hint || "Move through the route and keep going.",
+      };
+    }
+
     return {
-      title: "The final route is open.",
-      body: "Head for the exit and watch the sunrise.",
+      title: this.act.title || "Keep moving.",
+      body: this.act.hint || "Push deeper into the yard.",
     };
   }
 
@@ -242,35 +239,58 @@ export class ObsoleteGame {
         y: nearestNpc.y,
         w: nearestNpc.w,
         h: nearestNpc.h,
-        label: `Press E: talk to ${nearestNpc.name}`,
+        label: `Talk to ${nearestNpc.name}`,
+        tone: nearestNpc.portrait === "modem" ? "guide" : "talk",
+        highlightStyle: "beacon",
       };
     }
 
-    if (this.actIndex === 0 && this.isNearRect(this.act.socket, 120) && !this.progress.batterySocketPowered) {
+    if (this.act.socket && this.isNearRect(this.act.socket, 120) && !this.progress.batterySocketPowered) {
       return {
         type: "socket",
         ...this.act.socket,
-        label: "Socket nearby — shove the battery into it.",
+        label: "Align the battery with the socket",
+        tone: "power",
+        highlightStyle: "beam",
       };
     }
 
-    if (this.actIndex === 1 && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
+    if (this.act.gateConsole && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
       return {
         type: "gateConsole",
         ...this.act.gateConsole,
-        label: this.progress.hasFloppy ? "Press E: use the gate console" : "Gate console: find a floppy disk first",
+        label: this.progress.hasFloppy ? "Use the gate console" : "Find the floppy disk first",
+        tone: this.progress.hasFloppy ? "power" : "warning",
+        highlightStyle: this.progress.hasFloppy ? "beam" : "ring",
       };
     }
 
-    if (this.actIndex === 2 && this.isNearRect(this.act.console, INTERACT_RANGE)) {
+    if (this.act.console && this.isNearRect(this.act.console, INTERACT_RANGE)) {
       return {
         type: "finalConsole",
         ...this.act.console,
-        label: this.progress.diagnosticPassed ? "Exit route is unlocked" : "Press E: start the diagnostic",
+        label: this.progress.diagnosticPassed ? "Exit route unlocked" : "Start the diagnostic",
+        tone: this.progress.diagnosticPassed ? "exit" : "guide",
+        highlightStyle: this.progress.diagnosticPassed ? "beam" : "beacon",
       };
     }
 
-    return null;
+    if (this.act.exitZone && this.isNearRect(this.act.exitZone, INTERACT_RANGE + 20)) {
+      const canExit = !this.act.exitZone.requires || this.progress[this.act.exitZone.requires];
+      return {
+        type: "exit",
+        ...this.act.exitZone,
+        label: canExit ? "Step into the exit route" : "Restore power to open the route",
+        tone: canExit ? "exit" : "warning",
+        highlightStyle: canExit ? "beam" : "ring",
+      };
+    }
+
+    return getObjectiveFocus({
+      act: this.act,
+      progress: this.progress,
+      player: this.player,
+    });
   }
 
   setDialogue(speaker, text, portrait = "laptop", duration = 5.2) {
@@ -364,11 +384,21 @@ export class ObsoleteGame {
     if (this.bootTimer >= 0.8) {
       this.bootTimer = 0;
       this.bootIndex += 1;
+      this.flash = Math.max(this.flash, 0.42);
+      this.powerSurge = Math.max(this.powerSurge, 0.62);
+      this.glitch = Math.max(this.glitch, 0.12);
       if (this.bootIndex === 1) {
         this.audio.boot();
       }
+      if (this.bootIndex < BOOT_LINES.length) {
+        this.setBanner(BOOT_LINES[this.bootIndex - 1], 0.9);
+      }
       if (this.bootIndex >= BOOT_LINES.length + 2) {
         this.mode = "play";
+        this.flash = Math.max(this.flash, 0.72);
+        this.powerSurge = Math.max(this.powerSurge, 0.9);
+        this.impact = Math.max(this.impact, 0.45);
+        this.setBanner("BOOT COMPLETE", 1.6);
         this.setDialogue("Obsolete", "Okay. I am alive. That seems important.", "laptop", 5.5);
         this.updateStatus(this.act.label, this.act.hint);
         this.startCutscene("act1Wake");
@@ -486,7 +516,8 @@ export class ObsoleteGame {
     }
 
     if (
-      this.actIndex === 0 &&
+      this.act.battery &&
+      this.act.socket &&
       !this.progress.batterySocketPowered &&
       rectsOverlap(next, this.act.battery) &&
       this.tryMoveBattery(dx, dy)
@@ -510,7 +541,7 @@ export class ObsoleteGame {
       .map((gate) => ({ x: gate.x, y: gate.y, w: gate.w, h: gate.h }));
     const solids = [...this.act.solids, ...gateRects];
 
-    if (this.actIndex === 0 && !this.progress.batterySocketPowered && !options.ignoreBattery) {
+    if (this.act.battery && this.act.socket && !this.progress.batterySocketPowered && !options.ignoreBattery) {
       solids.push(this.act.battery);
     }
 
@@ -664,21 +695,15 @@ export class ObsoleteGame {
       } else {
         this.loadAct(exit.toAct);
         this.setDialogue("Obsolete", this.getActIntroLine(exit.toAct), "laptop", 5.2);
-        if (exit.toAct === 1) {
-          this.startCutscene("act2Intro");
-        }
-        if (exit.toAct === 2) {
-          this.startCutscene("act3Intro");
+        if (this.act.enterCutscene) {
+          this.startCutscene(this.act.enterCutscene);
         }
       }
     }
   }
 
   getActIntroLine(actIndex) {
-    if (actIndex === 1) {
-      return "That shredder line is moving. So am I.";
-    }
-    return "One more test. Then no one gets to call me dead.";
+    return ACTS[actIndex]?.introLine || "Keep moving. The yard is not done with me yet.";
   }
 
   beginEnding() {
@@ -704,6 +729,9 @@ export class ObsoleteGame {
     this.flash = 1;
     this.powerSurge = 1;
     this.impact = 0.25;
+    this.glitch = 0.22;
+    this.setBanner("RECOVERY VOLTAGE DETECTED", 1.9);
+    this.setDialogue("Recovery BIOS", "Cold circuits wake. Hold together.", "console", 2.6);
     this.updateStatus("Boot Sequence", "An electrical surge crawls through the heap.");
   }
 
@@ -733,14 +761,14 @@ export class ObsoleteGame {
     if (targetNpc) {
       const line = targetNpc.lines[targetNpc.index || 0];
       targetNpc.index = ((targetNpc.index || 0) + 1) % targetNpc.lines.length;
-      this.progress.act1TalkedToMachine = this.progress.act1TalkedToMachine || this.actIndex === 0;
-      this.progress.act2UnderstoodGate = this.progress.act2UnderstoodGate || this.actIndex === 1;
+      this.progress.act1TalkedToMachine = this.progress.act1TalkedToMachine || !!this.act.socket;
+      this.progress.act2UnderstoodGate = this.progress.act2UnderstoodGate || !!this.act.gateConsole;
       this.setDialogue(targetNpc.name, line, targetNpc.portrait, 4.8);
       this.interactionFocus = this.getInteractionFocus();
       return;
     }
 
-    if (this.actIndex === 1 && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
+    if (this.act.gateConsole && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
       if (!this.progress.hasFloppy) {
         this.audio.error();
         this.setDialogue(
@@ -762,7 +790,7 @@ export class ObsoleteGame {
       return;
     }
 
-    if (this.actIndex === 2 && this.isNearRect(this.act.console, INTERACT_RANGE)) {
+    if (this.act.console && this.isNearRect(this.act.console, INTERACT_RANGE)) {
       if (!this.progress.diagnosticPassed) {
         this.startMiniGame();
       } else {
@@ -772,7 +800,7 @@ export class ObsoleteGame {
     }
 
     if (
-      this.actIndex === 0 &&
+      this.act.socket &&
       this.isNearRect(this.act.socket, 100) &&
       !this.progress.batterySocketPowered
     ) {
@@ -1050,6 +1078,7 @@ export class ObsoleteGame {
     const prompt = this.mode === "play" ? this.interactionFocus?.label || "" : "";
     this.ui.interactionPrompt.textContent = prompt;
     this.ui.interactionPrompt.classList.toggle("is-hidden", !prompt);
+    this.ui.interactionPrompt.dataset.tone = this.interactionFocus?.tone || "talk";
 
     this.ui.objectivePanel.classList.toggle("is-hidden", this.mode === "title");
     this.ui.titleScreen.classList.toggle("is-hidden", this.mode !== "title");
@@ -1105,6 +1134,7 @@ export class ObsoleteGame {
       objective: this.ui.statusHint.textContent,
       objectiveTitle: this.getCurrentObjective().title,
       interactionPrompt: this.interactionFocus?.label || "",
+      interactionTone: this.interactionFocus?.tone || "",
       flags: {
         batterySocketPowered: this.progress.batterySocketPowered,
         hasFloppy: this.progress.hasFloppy,
