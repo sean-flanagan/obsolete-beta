@@ -6,6 +6,57 @@ const HEIGHT = 540;
 const PLAYER_SPEED = 220;
 const INTERACT_RANGE = 80;
 const MAX_INTEGRITY = 3;
+const MINIGAME_RETRY_DELAY = 0.7;
+const MINIGAME_SHOW_INTERVAL = 0.55;
+
+const EFFECT_DECAY_RATES = {
+  flash: 2.4,
+  glitch: 1.8,
+  impact: 2.8,
+  powerSurge: 1.4,
+  triumph: 0.9,
+};
+
+const PREVENTED_KEYS = new Set([
+  "arrowup",
+  "arrowdown",
+  "arrowleft",
+  "arrowright",
+  " ",
+  "enter",
+  "e",
+  "f",
+  "r",
+]);
+
+const MOVEMENT_KEYS = new Set([
+  "arrowup",
+  "arrowdown",
+  "arrowleft",
+  "arrowright",
+  "w",
+  "a",
+  "s",
+  "d",
+]);
+
+const WASD_TO_ARROW = {
+  w: "arrowup",
+  a: "arrowleft",
+  s: "arrowdown",
+  d: "arrowright",
+};
+
+const KEY_TO_DIRECTION = {
+  arrowup: "up",
+  arrowdown: "down",
+  arrowleft: "left",
+  arrowright: "right",
+  w: "up",
+  a: "left",
+  s: "down",
+  d: "right",
+};
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -20,7 +71,21 @@ const centerOf = (entity) => ({
   y: entity.y + entity.h / 2,
 });
 
+const boundsOf = (entity) => ({
+  x: entity.x,
+  y: entity.y,
+  w: entity.w,
+  h: entity.h,
+});
+
 const deepClone = (value) => JSON.parse(JSON.stringify(value));
+
+const decay = (value, rate, delta) =>
+  value > 0 ? Math.max(0, value - delta * rate) : value;
+
+const axisFromKeys = (isDown, negative, positive) =>
+  (isDown(positive[0]) || isDown(positive[1]) ? 1 : 0) -
+  (isDown(negative[0]) || isDown(negative[1]) ? 1 : 0);
 
 export class ObsoleteGame {
   constructor({ audio, renderer, ui }) {
@@ -135,53 +200,59 @@ export class ObsoleteGame {
     this.ui.statusHint.textContent = hint;
   }
 
+  playerBounds() {
+    return boundsOf(this.player);
+  }
+
   getCurrentObjective() {
-    if (this.mode === "title") {
-      return {
-        title: "Boot up and get your bearings.",
-        body: "Press Enter or click Boot Up to wake the laptop.",
-      };
-    }
+    const modeObjective = this.getModeObjective();
+    if (modeObjective) return modeObjective;
+    return this.getPlayObjective();
+  }
 
-    if (this.mode === "boot") {
-      return {
-        title: "Recovery BIOS is coming online.",
-        body: "Wait for the surge to finish, then start moving.",
-      };
+  getModeObjective() {
+    switch (this.mode) {
+      case "title":
+        return {
+          title: "Boot up and get your bearings.",
+          body: "Press Enter or click Boot Up to wake the laptop.",
+        };
+      case "boot":
+        return {
+          title: "Recovery BIOS is coming online.",
+          body: "Wait for the surge to finish, then start moving.",
+        };
+      case "cutscene":
+        return {
+          title: "Watch the scene for your next goal.",
+          body: "Press Enter, E, or Space to advance dialogue when you're ready.",
+        };
+      case "minigame":
+        return {
+          title: `Pass Diagnostic ${this.miniGame.round}/3.`,
+          body:
+            this.miniGame.phase === "input"
+              ? "Repeat the shown sequence with Arrow Keys or WASD."
+              : "Watch the sequence, then repeat it cleanly.",
+        };
+      case "ending":
+        return {
+          title: "Run for the sunrise.",
+          body: "Keep moving right. You are out if you stay moving.",
+        };
+      case "win":
+        return {
+          title: "You escaped.",
+          body: "Press Play Again or R to restart the prototype.",
+        };
+      default:
+        return null;
     }
+  }
 
-    if (this.mode === "cutscene") {
-      return {
-        title: "Watch the scene for your next goal.",
-        body: "Press Enter, E, or Space to advance dialogue when you're ready.",
-      };
-    }
-
-    if (this.mode === "minigame") {
-      return {
-        title: `Pass Diagnostic ${this.miniGame.round}/3.`,
-        body:
-          this.miniGame.phase === "input"
-            ? "Repeat the shown sequence with Arrow Keys or WASD."
-            : "Watch the sequence, then repeat it cleanly.",
-      };
-    }
-
-    if (this.mode === "ending") {
-      return {
-        title: "Run for the sunrise.",
-        body: "Keep moving right. You are out if you stay moving.",
-      };
-    }
-
-    if (this.mode === "win") {
-      return {
-        title: "You escaped.",
-        body: "Press Play Again or R to restart the prototype.",
-      };
-    }
-
-    const hasBatteryGoal = this.act.socket && this.act.battery && !this.progress.batterySocketPowered;
+  getPlayObjective() {
+    const hasBatteryGoal =
+      this.act.socket && this.act.battery && !this.progress.batterySocketPowered;
     if (hasBatteryGoal) {
       if (!this.progress.act1TalkedToMachine && (this.act.npcs || []).length) {
         return {
@@ -196,7 +267,10 @@ export class ObsoleteGame {
     }
 
     if (this.act.gateConsole && !this.progress.act2GateOpen) {
-      if (!this.progress.hasFloppy && (this.act.items || []).some((item) => item.id === "floppy")) {
+      const needsFloppy =
+        !this.progress.hasFloppy &&
+        (this.act.items || []).some((item) => item.id === "floppy");
+      if (needsFloppy) {
         return {
           title: "Find the floppy disk.",
           body: "Ride the conveyors, dodge the crushers, and grab the glowing disk before the gate console.",
@@ -245,7 +319,11 @@ export class ObsoleteGame {
       };
     }
 
-    if (this.act.socket && this.isNearRect(this.act.socket, 120) && !this.progress.batterySocketPowered) {
+    if (
+      this.act.socket &&
+      this.isNearRect(this.act.socket, 120) &&
+      !this.progress.batterySocketPowered
+    ) {
       return {
         type: "socket",
         ...this.act.socket,
@@ -256,27 +334,30 @@ export class ObsoleteGame {
     }
 
     if (this.act.gateConsole && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
+      const hasFloppy = this.progress.hasFloppy;
       return {
         type: "gateConsole",
         ...this.act.gateConsole,
-        label: this.progress.hasFloppy ? "Use the gate console" : "Find the floppy disk first",
-        tone: this.progress.hasFloppy ? "power" : "warning",
-        highlightStyle: this.progress.hasFloppy ? "beam" : "ring",
+        label: hasFloppy ? "Use the gate console" : "Find the floppy disk first",
+        tone: hasFloppy ? "power" : "warning",
+        highlightStyle: hasFloppy ? "beam" : "ring",
       };
     }
 
     if (this.act.console && this.isNearRect(this.act.console, INTERACT_RANGE)) {
+      const passed = this.progress.diagnosticPassed;
       return {
         type: "finalConsole",
         ...this.act.console,
-        label: this.progress.diagnosticPassed ? "Exit route unlocked" : "Start the diagnostic",
-        tone: this.progress.diagnosticPassed ? "exit" : "guide",
-        highlightStyle: this.progress.diagnosticPassed ? "beam" : "beacon",
+        label: passed ? "Exit route unlocked" : "Start the diagnostic",
+        tone: passed ? "exit" : "guide",
+        highlightStyle: passed ? "beam" : "beacon",
       };
     }
 
     if (this.act.exitZone && this.isNearRect(this.act.exitZone, INTERACT_RANGE + 20)) {
-      const canExit = !this.act.exitZone.requires || this.progress[this.act.exitZone.requires];
+      const canExit =
+        !this.act.exitZone.requires || this.progress[this.act.exitZone.requires];
       return {
         type: "exit",
         ...this.act.exitZone,
@@ -335,39 +416,38 @@ export class ObsoleteGame {
   advance(delta) {
     this.time += delta;
     this.tickScheduledEvents(delta);
+    this.decayEffects(delta);
 
-    if (this.flash > 0) this.flash = Math.max(0, this.flash - delta * 2.4);
-    if (this.glitch > 0) this.glitch = Math.max(0, this.glitch - delta * 1.8);
-    if (this.impact > 0) this.impact = Math.max(0, this.impact - delta * 2.8);
-    if (this.powerSurge > 0) this.powerSurge = Math.max(0, this.powerSurge - delta * 1.4);
-    if (this.triumph > 0) this.triumph = Math.max(0, this.triumph - delta * 0.9);
-    if (this.banner.timer > 0) this.banner.timer = Math.max(0, this.banner.timer - delta);
+    switch (this.mode) {
+      case "boot":
+        this.updateBoot(delta);
+        return;
+      case "cutscene":
+        this.updateCutscene(delta);
+        return;
+      case "play":
+        this.updatePlay(delta);
+        return;
+      case "minigame":
+        this.updateMiniGame(delta);
+        return;
+      case "ending":
+        this.updateEnding(delta);
+        return;
+      default:
+        return;
+    }
+  }
+
+  decayEffects(delta) {
+    for (const key in EFFECT_DECAY_RATES) {
+      this[key] = decay(this[key], EFFECT_DECAY_RATES[key], delta);
+    }
+    if (this.banner.timer > 0) {
+      this.banner.timer = Math.max(0, this.banner.timer - delta);
+    }
     if (this.dialogue.timer > 0 && this.mode === "play") {
       this.dialogue.timer = Math.max(0, this.dialogue.timer - delta);
-    }
-
-    if (this.mode === "boot") {
-      this.updateBoot(delta);
-      return;
-    }
-
-    if (this.mode === "cutscene") {
-      this.updateCutscene(delta);
-      return;
-    }
-
-    if (this.mode === "play") {
-      this.updatePlay(delta);
-      return;
-    }
-
-    if (this.mode === "minigame") {
-      this.updateMiniGame(delta);
-      return;
-    }
-
-    if (this.mode === "ending") {
-      this.updateEnding(delta);
     }
   }
 
@@ -381,29 +461,34 @@ export class ObsoleteGame {
 
   updateBoot(delta) {
     this.bootTimer += delta;
-    if (this.bootTimer >= 0.8) {
-      this.bootTimer = 0;
-      this.bootIndex += 1;
-      this.flash = Math.max(this.flash, 0.42);
-      this.powerSurge = Math.max(this.powerSurge, 0.62);
-      this.glitch = Math.max(this.glitch, 0.12);
-      if (this.bootIndex === 1) {
-        this.audio.boot();
-      }
-      if (this.bootIndex < BOOT_LINES.length) {
-        this.setBanner(BOOT_LINES[this.bootIndex - 1], 0.9);
-      }
-      if (this.bootIndex >= BOOT_LINES.length + 2) {
-        this.mode = "play";
-        this.flash = Math.max(this.flash, 0.72);
-        this.powerSurge = Math.max(this.powerSurge, 0.9);
-        this.impact = Math.max(this.impact, 0.45);
-        this.setBanner("BOOT COMPLETE", 1.6);
-        this.setDialogue("Obsolete", "Okay. I am alive. That seems important.", "laptop", 5.5);
-        this.updateStatus(this.act.label, this.act.hint);
-        this.startCutscene("act1Wake");
-      }
+    if (this.bootTimer < 0.8) return;
+
+    this.bootTimer = 0;
+    this.bootIndex += 1;
+    this.flash = Math.max(this.flash, 0.42);
+    this.powerSurge = Math.max(this.powerSurge, 0.62);
+    this.glitch = Math.max(this.glitch, 0.12);
+
+    if (this.bootIndex === 1) {
+      this.audio.boot();
     }
+    if (this.bootIndex < BOOT_LINES.length) {
+      this.setBanner(BOOT_LINES[this.bootIndex - 1], 0.9);
+    }
+    if (this.bootIndex >= BOOT_LINES.length + 2) {
+      this.finishBoot();
+    }
+  }
+
+  finishBoot() {
+    this.mode = "play";
+    this.flash = Math.max(this.flash, 0.72);
+    this.powerSurge = Math.max(this.powerSurge, 0.9);
+    this.impact = Math.max(this.impact, 0.45);
+    this.setBanner("BOOT COMPLETE", 1.6);
+    this.setDialogue("Obsolete", "Okay. I am alive. That seems important.", "laptop", 5.5);
+    this.updateStatus(this.act.label, this.act.hint);
+    this.startCutscene("act1Wake");
   }
 
   updateCutscene(delta) {
@@ -416,12 +501,16 @@ export class ObsoleteGame {
   }
 
   updatePlay(delta) {
-    const axisX =
-      (this.isDown("arrowright") || this.isDown("d") ? 1 : 0) -
-      (this.isDown("arrowleft") || this.isDown("a") ? 1 : 0);
-    const axisY =
-      (this.isDown("arrowdown") || this.isDown("s") ? 1 : 0) -
-      (this.isDown("arrowup") || this.isDown("w") ? 1 : 0);
+    const axisX = axisFromKeys(
+      (k) => this.isDown(k),
+      ["arrowleft", "a"],
+      ["arrowright", "d"],
+    );
+    const axisY = axisFromKeys(
+      (k) => this.isDown(k),
+      ["arrowup", "w"],
+      ["arrowdown", "s"],
+    );
     const length = Math.hypot(axisX, axisY) || 1;
     let moveX = (axisX / length) * PLAYER_SPEED;
     let moveY = (axisY / length) * PLAYER_SPEED;
@@ -452,20 +541,20 @@ export class ObsoleteGame {
 
   updateMiniGame(delta) {
     this.updateCamera(delta);
-    if (this.miniGame.phase === "show") {
-      this.miniGame.showTimer -= delta;
-      if (this.miniGame.showTimer <= 0) {
-        this.miniGame.showIndex += 1;
-        if (this.miniGame.showIndex >= this.miniGame.sequence.length) {
-          this.miniGame.phase = "input";
-          this.miniGame.inputIndex = 0;
-          this.miniGame.acceptedKeys = [];
-          this.miniGame.message = "Repeat the sequence with Arrow Keys or WASD.";
-        } else {
-          this.miniGame.showTimer = 0.55;
-          this.audio.interact();
-        }
-      }
+    if (this.miniGame.phase !== "show") return;
+
+    this.miniGame.showTimer -= delta;
+    if (this.miniGame.showTimer > 0) return;
+
+    this.miniGame.showIndex += 1;
+    if (this.miniGame.showIndex >= this.miniGame.sequence.length) {
+      this.miniGame.phase = "input";
+      this.miniGame.inputIndex = 0;
+      this.miniGame.acceptedKeys = [];
+      this.miniGame.message = "Repeat the sequence with Arrow Keys or WASD.";
+    } else {
+      this.miniGame.showTimer = MINIGAME_SHOW_INTERVAL;
+      this.audio.interact();
     }
   }
 
@@ -484,18 +573,15 @@ export class ObsoleteGame {
   }
 
   updateCamera(delta) {
-    if (this.mode === "cutscene" && this.cutscene?.focus) {
-      const targetX = clamp(this.cutscene.focus.x - WIDTH / 2, 0, this.act.world.width - WIDTH);
-      const targetY = clamp(this.cutscene.focus.y - HEIGHT / 2, 0, this.act.world.height - HEIGHT);
-      this.camera.x += (targetX - this.camera.x) * Math.min(1, delta * 3.8);
-      this.camera.y += (targetY - this.camera.y) * Math.min(1, delta * 3.8);
-      return;
-    }
+    const followFocus = this.mode === "cutscene" && this.cutscene?.focus;
+    const target = followFocus ? this.cutscene.focus : this.player;
+    const lerp = followFocus ? 3.8 : 5.5;
 
-    const targetX = clamp(this.player.x - WIDTH / 2, 0, this.act.world.width - WIDTH);
-    const targetY = clamp(this.player.y - HEIGHT / 2, 0, this.act.world.height - HEIGHT);
-    this.camera.x += (targetX - this.camera.x) * Math.min(1, delta * 5.5);
-    this.camera.y += (targetY - this.camera.y) * Math.min(1, delta * 5.5);
+    const targetX = clamp(target.x - WIDTH / 2, 0, this.act.world.width - WIDTH);
+    const targetY = clamp(target.y - HEIGHT / 2, 0, this.act.world.height - HEIGHT);
+    const step = Math.min(1, delta * lerp);
+    this.camera.x += (targetX - this.camera.x) * step;
+    this.camera.y += (targetY - this.camera.y) * step;
   }
 
   movePlayer(dx, dy) {
@@ -515,13 +601,13 @@ export class ObsoleteGame {
       return;
     }
 
-    if (
+    const pushingBattery =
       this.act.battery &&
       this.act.socket &&
       !this.progress.batterySocketPowered &&
       rectsOverlap(next, this.act.battery) &&
-      this.tryMoveBattery(dx, dy)
-    ) {
+      this.tryMoveBattery(dx, dy);
+    if (pushingBattery) {
       this.player.x = next.x;
       this.player.y = next.y;
       return;
@@ -538,10 +624,15 @@ export class ObsoleteGame {
   getSolidCollision(rect, options = {}) {
     const gateRects = (this.act.gates || [])
       .filter((gate) => !this.progress[gate.opensWith])
-      .map((gate) => ({ x: gate.x, y: gate.y, w: gate.w, h: gate.h }));
+      .map((gate) => boundsOf(gate));
     const solids = [...this.act.solids, ...gateRects];
 
-    if (this.act.battery && this.act.socket && !this.progress.batterySocketPowered && !options.ignoreBattery) {
+    const batteryIsSolid =
+      this.act.battery &&
+      this.act.socket &&
+      !this.progress.batterySocketPowered &&
+      !options.ignoreBattery;
+    if (batteryIsSolid) {
       solids.push(this.act.battery);
     }
 
@@ -567,25 +658,30 @@ export class ObsoleteGame {
     battery.x = nextBattery.x;
     battery.y = nextBattery.y;
 
-    const socket = this.act.socket;
-    if (rectsOverlap(battery, socket)) {
-      battery.x = socket.x + 8;
-      battery.y = socket.y + 12;
-      this.progress.batterySocketPowered = true;
-      this.flash = 1;
-      this.impact = 0.7;
-      this.powerSurge = 1;
-      this.audio.success();
-      this.player.mood = "determined";
-      this.setDialogue("Obsolete", "I still take a charge. Open, you rusted door.", "laptop", 5.5);
-      this.setBanner("POWER RESTORED", 2.2);
-      this.activeCheckpoint = { x: 1505, y: 590, label: "Checkpoint: gate restored." };
-      this.startCutscene("act1Gate");
+    if (rectsOverlap(battery, this.act.socket)) {
+      this.snapBatteryIntoSocket();
     }
     return true;
   }
 
+  snapBatteryIntoSocket() {
+    const { battery, socket } = this.act;
+    battery.x = socket.x + 8;
+    battery.y = socket.y + 12;
+    this.progress.batterySocketPowered = true;
+    this.flash = 1;
+    this.impact = 0.7;
+    this.powerSurge = 1;
+    this.audio.success();
+    this.player.mood = "determined";
+    this.setDialogue("Obsolete", "I still take a charge. Open, you rusted door.", "laptop", 5.5);
+    this.setBanner("POWER RESTORED", 2.2);
+    this.activeCheckpoint = { x: 1505, y: 590, label: "Checkpoint: gate restored." };
+    this.startCutscene("act1Gate");
+  }
+
   updateCheckpoints() {
+    const playerRect = this.playerBounds();
     for (const checkpoint of this.act.checkpoints || []) {
       const trigger = {
         x: checkpoint.x - checkpoint.radius / 2,
@@ -593,57 +689,60 @@ export class ObsoleteGame {
         w: checkpoint.radius,
         h: checkpoint.radius,
       };
-      const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
-      if (rectsOverlap(playerRect, trigger) && this.activeCheckpoint.label !== checkpoint.label) {
-        this.activeCheckpoint = {
-          x: checkpoint.x,
-          y: checkpoint.y,
-          label: checkpoint.label,
-        };
-        this.progress.integrity = MAX_INTEGRITY;
-        this.setBanner("CHECKPOINT", 1.2);
-        this.flash = Math.max(this.flash, 0.22);
-        this.triumph = Math.max(this.triumph, 0.18);
-        this.setDialogue("Scrap Heap", checkpoint.label, "laptop", 3.4);
-      }
+      if (!rectsOverlap(playerRect, trigger)) continue;
+      if (this.activeCheckpoint.label === checkpoint.label) continue;
+
+      this.activeCheckpoint = {
+        x: checkpoint.x,
+        y: checkpoint.y,
+        label: checkpoint.label,
+      };
+      this.progress.integrity = MAX_INTEGRITY;
+      this.setBanner("CHECKPOINT", 1.2);
+      this.flash = Math.max(this.flash, 0.22);
+      this.triumph = Math.max(this.triumph, 0.18);
+      this.setDialogue("Scrap Heap", checkpoint.label, "laptop", 3.4);
     }
   }
 
   updateItems() {
-    const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+    const playerRect = this.playerBounds();
 
     for (const fragment of this.act.fragments || []) {
       if (fragment.collected) continue;
       const pickupRect = { x: fragment.x - 13, y: fragment.y - 13, w: 26, h: 26 };
-      if (rectsOverlap(playerRect, pickupRect)) {
-        fragment.collected = true;
-        this.progress.fragments.push(fragment.id);
-        this.flash = Math.max(this.flash, 0.24);
-        this.triumph = Math.max(this.triumph, 0.25);
-        this.setDialogue("Recovered File", fragment.text, "fragment", 3.8);
-      }
+      if (!rectsOverlap(playerRect, pickupRect)) continue;
+
+      fragment.collected = true;
+      this.progress.fragments.push(fragment.id);
+      this.flash = Math.max(this.flash, 0.24);
+      this.triumph = Math.max(this.triumph, 0.25);
+      this.setDialogue("Recovered File", fragment.text, "fragment", 3.8);
     }
 
     for (const item of this.act.items || []) {
       if (item.collected) continue;
-      const pickupRect = { x: item.x, y: item.y, w: item.w, h: item.h };
-      if (rectsOverlap(playerRect, pickupRect)) {
-        item.collected = true;
-        if (item.id === "floppy") {
-          this.progress.hasFloppy = true;
-          this.audio.success();
-          this.flash = Math.max(this.flash, 0.3);
-          this.triumph = Math.max(this.triumph, 0.32);
-          this.setDialogue("Obsolete", item.text, "laptop", 4.2);
-          this.progress.act2UnderstoodGate = true;
-          this.updateStatus(this.act.label, "You have a floppy disk. Feed it to the gate console.");
-        }
+      if (!rectsOverlap(playerRect, boundsOf(item))) continue;
+
+      item.collected = true;
+      if (item.id === "floppy") {
+        this.collectFloppy(item);
       }
     }
   }
 
+  collectFloppy(item) {
+    this.progress.hasFloppy = true;
+    this.audio.success();
+    this.flash = Math.max(this.flash, 0.3);
+    this.triumph = Math.max(this.triumph, 0.32);
+    this.setDialogue("Obsolete", item.text, "laptop", 4.2);
+    this.progress.act2UnderstoodGate = true;
+    this.updateStatus(this.act.label, "You have a floppy disk. Feed it to the gate console.");
+  }
+
   updateHazards() {
-    const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+    const playerRect = this.playerBounds();
 
     for (const hazard of this.act.hazards || []) {
       const offset = ((Math.sin(this.time * hazard.speed + hazard.phase) + 1) / 2) * hazard.travel;
@@ -683,22 +782,18 @@ export class ObsoleteGame {
 
   checkActInteractions() {
     const exit = this.act.exitZone;
-    const playerRect = { x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h };
+    if (!exit || !rectsOverlap(this.playerBounds(), exit)) return;
+    if (exit.requires && !this.progress[exit.requires]) return;
 
-    if (exit && rectsOverlap(playerRect, exit)) {
-      if (exit.requires && !this.progress[exit.requires]) {
-        return;
-      }
+    if (exit.toAct === "ending") {
+      this.beginEnding();
+      return;
+    }
 
-      if (exit.toAct === "ending") {
-        this.beginEnding();
-      } else {
-        this.loadAct(exit.toAct);
-        this.setDialogue("Obsolete", this.getActIntroLine(exit.toAct), "laptop", 5.2);
-        if (this.act.enterCutscene) {
-          this.startCutscene(this.act.enterCutscene);
-        }
-      }
+    this.loadAct(exit.toAct);
+    this.setDialogue("Obsolete", this.getActIntroLine(exit.toAct), "laptop", 5.2);
+    if (this.act.enterCutscene) {
+      this.startCutscene(this.act.enterCutscene);
     }
   }
 
@@ -740,75 +835,87 @@ export class ObsoleteGame {
       this.beginBoot();
       return;
     }
-
     if (this.mode === "win") {
       this.reset();
       return;
     }
-
     if (this.mode === "cutscene") {
-      this.advanceCutscene(true);
+      this.advanceCutscene();
       return;
     }
-
-    if (this.mode !== "play") {
-      return;
-    }
+    if (this.mode !== "play") return;
 
     this.audio.interact();
 
-    const targetNpc = this.findNearest(this.act.npcs || []);
-    if (targetNpc) {
-      const line = targetNpc.lines[targetNpc.index || 0];
-      targetNpc.index = ((targetNpc.index || 0) + 1) % targetNpc.lines.length;
-      this.progress.act1TalkedToMachine = this.progress.act1TalkedToMachine || !!this.act.socket;
-      this.progress.act2UnderstoodGate = this.progress.act2UnderstoodGate || !!this.act.gateConsole;
-      this.setDialogue(targetNpc.name, line, targetNpc.portrait, 4.8);
-      this.interactionFocus = this.getInteractionFocus();
-      return;
-    }
-
-    if (this.act.gateConsole && this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) {
-      if (!this.progress.hasFloppy) {
-        this.audio.error();
-        this.setDialogue(
-          "Gate Console",
-          "Insert boot media. Preferably something square and dusty.",
-          "console",
-          4.5
-        );
-        return;
-      }
-      this.progress.act2GateOpen = true;
-      this.progress.act2UnderstoodGate = true;
-      this.audio.success();
-      this.flash = Math.max(this.flash, 0.45);
-      this.impact = Math.max(this.impact, 0.45);
-      this.powerSurge = Math.max(this.powerSurge, 0.7);
-      this.setBanner("GATE UNLOCKED", 1.8);
-      this.setDialogue("Gate Console", "Legacy media accepted. Route open.", "console", 4.2);
-      return;
-    }
-
-    if (this.act.console && this.isNearRect(this.act.console, INTERACT_RANGE)) {
-      if (!this.progress.diagnosticPassed) {
-        this.startMiniGame();
-      } else {
-        this.setDialogue("Diagnostic Console", "Utility verified. Exit route remains open.", "console", 4);
-      }
-      return;
-    }
-
-    if (
-      this.act.socket &&
-      this.isNearRect(this.act.socket, 100) &&
-      !this.progress.batterySocketPowered
-    ) {
-      this.setDialogue("Socket", "Cold. Hungry. Missing one battery with ambition.", "console", 4);
-      return;
-    }
+    if (this.interactWithNpc()) return;
+    if (this.interactWithGateConsole()) return;
+    if (this.interactWithDiagnosticConsole()) return;
+    if (this.interactWithSocket()) return;
 
     this.setDialogue("Obsolete", "Nothing here but rust, dust, and motive.", "laptop", 2.8);
+  }
+
+  interactWithNpc() {
+    const targetNpc = this.findNearest(this.act.npcs || []);
+    if (!targetNpc) return false;
+
+    const index = targetNpc.index || 0;
+    const line = targetNpc.lines[index];
+    targetNpc.index = (index + 1) % targetNpc.lines.length;
+    this.progress.act1TalkedToMachine =
+      this.progress.act1TalkedToMachine || !!this.act.socket;
+    this.progress.act2UnderstoodGate =
+      this.progress.act2UnderstoodGate || !!this.act.gateConsole;
+    this.setDialogue(targetNpc.name, line, targetNpc.portrait, 4.8);
+    this.interactionFocus = this.getInteractionFocus();
+    return true;
+  }
+
+  interactWithGateConsole() {
+    if (!this.act.gateConsole) return false;
+    if (!this.isNearRect(this.act.gateConsole, INTERACT_RANGE)) return false;
+
+    if (!this.progress.hasFloppy) {
+      this.audio.error();
+      this.setDialogue(
+        "Gate Console",
+        "Insert boot media. Preferably something square and dusty.",
+        "console",
+        4.5,
+      );
+      return true;
+    }
+
+    this.progress.act2GateOpen = true;
+    this.progress.act2UnderstoodGate = true;
+    this.audio.success();
+    this.flash = Math.max(this.flash, 0.45);
+    this.impact = Math.max(this.impact, 0.45);
+    this.powerSurge = Math.max(this.powerSurge, 0.7);
+    this.setBanner("GATE UNLOCKED", 1.8);
+    this.setDialogue("Gate Console", "Legacy media accepted. Route open.", "console", 4.2);
+    return true;
+  }
+
+  interactWithDiagnosticConsole() {
+    if (!this.act.console) return false;
+    if (!this.isNearRect(this.act.console, INTERACT_RANGE)) return false;
+
+    if (!this.progress.diagnosticPassed) {
+      this.startMiniGame();
+    } else {
+      this.setDialogue("Diagnostic Console", "Utility verified. Exit route remains open.", "console", 4);
+    }
+    return true;
+  }
+
+  interactWithSocket() {
+    if (!this.act.socket) return false;
+    if (!this.isNearRect(this.act.socket, 100)) return false;
+    if (this.progress.batterySocketPowered) return false;
+
+    this.setDialogue("Socket", "Cold. Hungry. Missing one battery with ambition.", "console", 4);
+    return true;
   }
 
   startMiniGame() {
@@ -825,7 +932,7 @@ export class ObsoleteGame {
     const pool = ["left", "up", "right", "down"];
     this.miniGame.sequence = Array.from(
       { length: this.miniGame.round + 2 },
-      (_, index) => pool[(index + this.miniGame.round) % pool.length]
+      (_, index) => pool[(index + this.miniGame.round) % pool.length],
     );
     this.miniGame.phase = "show";
     this.miniGame.showIndex = 0;
@@ -834,6 +941,14 @@ export class ObsoleteGame {
     this.miniGame.acceptedKeys = [];
     this.miniGame.message = `Diagnostic ${this.miniGame.round}/3: watch carefully.`;
     this.audio.interact();
+  }
+
+  scheduleMiniGameRound(delay = MINIGAME_RETRY_DELAY) {
+    this.schedule(delay, () => {
+      if (this.mode === "minigame") {
+        this.beginMiniGameRound();
+      }
+    });
   }
 
   handleMiniGameInput(direction) {
@@ -848,11 +963,7 @@ export class ObsoleteGame {
       this.flash = 0.35;
       this.miniGame.message = "Sequence mismatch. Try the round again.";
       this.miniGame.phase = "retry";
-      this.schedule(0.7, () => {
-        if (this.mode === "minigame") {
-          this.beginMiniGameRound();
-        }
-      });
+      this.scheduleMiniGameRound();
       return;
     }
 
@@ -862,37 +973,37 @@ export class ObsoleteGame {
     this.miniGame.acceptedKeys.push(direction);
     this.miniGame.inputIndex += 1;
 
-    if (this.miniGame.inputIndex >= this.miniGame.sequence.length) {
-      if (this.miniGame.round >= 3) {
-        this.progress.diagnosticPassed = true;
-        this.mode = "play";
-        this.cutscene = null;
-        this.player.mood = "heroic";
-        this.flash = 0.75;
-        this.impact = 0.55;
-        this.powerSurge = 0.9;
-        this.triumph = 1;
-        this.setBanner("UTILITY CONFIRMED", 2.4);
-        this.setDialogue(
-          "Diagnostic Console",
-          "Result: alive, useful, impossible to decommission quietly.",
-          "console",
-          5.2
-        );
-        this.audio.success();
-        this.startCutscene("finalGate");
-        return;
-      }
+    if (this.miniGame.inputIndex < this.miniGame.sequence.length) return;
 
-      this.miniGame.round += 1;
-      this.miniGame.message = "Subsystem stable. Preparing next test.";
-      this.miniGame.phase = "pause";
-      this.schedule(0.7, () => {
-        if (this.mode === "minigame") {
-          this.beginMiniGameRound();
-        }
-      });
+    if (this.miniGame.round >= 3) {
+      this.finishMiniGame();
+      return;
     }
+
+    this.miniGame.round += 1;
+    this.miniGame.message = "Subsystem stable. Preparing next test.";
+    this.miniGame.phase = "pause";
+    this.scheduleMiniGameRound();
+  }
+
+  finishMiniGame() {
+    this.progress.diagnosticPassed = true;
+    this.mode = "play";
+    this.cutscene = null;
+    this.player.mood = "heroic";
+    this.flash = 0.75;
+    this.impact = 0.55;
+    this.powerSurge = 0.9;
+    this.triumph = 1;
+    this.setBanner("UTILITY CONFIRMED", 2.4);
+    this.setDialogue(
+      "Diagnostic Console",
+      "Result: alive, useful, impossible to decommission quietly.",
+      "console",
+      5.2,
+    );
+    this.audio.success();
+    this.startCutscene("finalGate");
   }
 
   findNearest(list) {
@@ -902,7 +1013,10 @@ export class ObsoleteGame {
 
     for (const entity of list) {
       const entityCenter = centerOf(entity);
-      const distance = Math.hypot(playerCenter.x - entityCenter.x, playerCenter.y - entityCenter.y);
+      const distance = Math.hypot(
+        playerCenter.x - entityCenter.x,
+        playerCenter.y - entityCenter.y,
+      );
       if (distance < INTERACT_RANGE && distance < nearestDistance) {
         nearest = entity;
         nearestDistance = distance;
@@ -939,14 +1053,10 @@ export class ObsoleteGame {
     this.advanceCutscene();
   }
 
-  advanceCutscene(force = false) {
+  advanceCutscene() {
     if (!this.cutscene) return;
 
-    if (force) {
-      this.cutscene.index += 1;
-    } else {
-      this.cutscene.index += 1;
-    }
+    this.cutscene.index += 1;
 
     if (this.cutscene.index >= this.cutscene.steps.length) {
       const fallbackHint = this.cutscene.returnHint || this.act.hint;
@@ -971,9 +1081,7 @@ export class ObsoleteGame {
 
   handleKeyDown(event) {
     const key = event.key.toLowerCase();
-    if (
-      ["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter", "e", "f", "r"].includes(key)
-    ) {
+    if (PREVENTED_KEYS.has(key)) {
       event.preventDefault();
     }
 
@@ -983,51 +1091,32 @@ export class ObsoleteGame {
       this.toggleFullscreen();
       return;
     }
-
     if (key === "r") {
       this.reset();
       return;
     }
-
-    if (key === "enter" && this.mode === "title") {
-      this.beginBoot();
-      return;
+    if (key === "enter") {
+      if (this.mode === "title") {
+        this.beginBoot();
+        return;
+      }
+      if (this.mode === "win") {
+        this.reset();
+        return;
+      }
+      if (this.mode === "cutscene") {
+        this.advanceCutscene();
+        return;
+      }
     }
 
-    if (key === "enter" && this.mode === "win") {
-      this.reset();
-      return;
+    if (WASD_TO_ARROW[key]) {
+      this.keys.add(WASD_TO_ARROW[key]);
     }
 
-    if (key === "enter" && this.mode === "cutscene") {
-      this.advanceCutscene(true);
-      return;
-    }
-
-    const movementAlias = {
-      w: "arrowup",
-      a: "arrowleft",
-      s: "arrowdown",
-      d: "arrowright",
-    };
-    const directionAlias = {
-      arrowup: "up",
-      arrowdown: "down",
-      arrowleft: "left",
-      arrowright: "right",
-      w: "up",
-      a: "left",
-      s: "down",
-      d: "right",
-    };
-
-    if (movementAlias[key]) {
-      this.keys.add(movementAlias[key]);
-    }
-
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(key)) {
+    if (MOVEMENT_KEYS.has(key)) {
       this.keys.add(key);
-      this.handleMiniGameInput(directionAlias[key]);
+      this.handleMiniGameInput(KEY_TO_DIRECTION[key]);
     }
 
     if (key === "e" || key === " ") {
@@ -1037,16 +1126,9 @@ export class ObsoleteGame {
 
   handleKeyUp(event) {
     const key = event.key.toLowerCase();
-    const movementAlias = {
-      w: "arrowup",
-      a: "arrowleft",
-      s: "arrowdown",
-      d: "arrowright",
-    };
-
     this.keys.delete(key);
-    if (movementAlias[key]) {
-      this.keys.delete(movementAlias[key]);
+    if (WASD_TO_ARROW[key]) {
+      this.keys.delete(WASD_TO_ARROW[key]);
     }
   }
 
